@@ -4,7 +4,7 @@ from states.global_state import GlobalState
 from states.import_state import ImportState
 
 
-class Azure2022ffCommon(FwCommon):
+class Azure2022ffCommon(FwCommon):  # noqa: DC
     def get_config(
         self, config_in: FwConfigManagerListController, import_state: ImportState, global_state: GlobalState
     ) -> tuple[int, FwConfigManagerListController]:

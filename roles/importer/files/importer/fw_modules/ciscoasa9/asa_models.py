@@ -7,12 +7,12 @@ from pydantic import BaseModel
 
 class AsaEnablePassword(BaseModel):
     password: str
-    encryption_function: str
+    encryption_function: str  # noqa: DC
 
 
 class AsaServiceModule(BaseModel):
     name: str
-    keepalive_timeout: int
+    keepalive_timeout: int  # noqa: DC
     keepalive_counter: int
 
 
@@ -25,8 +25,8 @@ class Names(BaseModel):
 class Interface(BaseModel):
     name: str
     nameif: str
-    bridge_group: str | None = None
-    security_level: int
+    bridge_group: str | None = None  # noqa: DC
+    security_level: int  # noqa: DC
     ip_address: str | None = None
     subnet_mask: str | None = None
     additional_settings: list[str]
@@ -119,25 +119,25 @@ class AccessGroupBinding(BaseModel):
 
 
 class NatRule(BaseModel):
-    object_name: str
+    object_name: str  # noqa: DC
     src_if: str
     dst_if: str
     nat_type: Literal["dynamic", "static"] = "dynamic"
-    translated_object: str | None = None
+    translated_object: str | None = None  # noqa: DC
 
 
 class Route(BaseModel):
     interface: str
     destination: str
-    netmask: str
-    next_hop: str
+    netmask: str  # noqa: DC
+    next_hop: str  # noqa: DC
     distance: int | None = None
 
 
 class MgmtAccessRule(BaseModel):
     protocol: Literal["http", "ssh", "telnet"]
-    source_ip: str
-    source_mask: str
+    source_ip: str  # noqa: DC
+    source_mask: str  # noqa: DC
     interface: str
 
 
@@ -147,9 +147,9 @@ class ClassMap(BaseModel):
 
 
 class DnsInspectParameters(BaseModel):
-    message_length_max_client: Literal["auto", "default"] | int | None = None
-    message_length_max: int | None = None
-    tcp_inspection: bool = True  # "no tcp-inspection" -> False
+    message_length_max_client: Literal["auto", "default"] | int | None = None  # noqa: DC
+    message_length_max: int | None = None  # noqa: DC
+    tcp_inspection: bool = True  # "no tcp-inspection" -> False # noqa: DC
 
 
 class InspectionAction(BaseModel):

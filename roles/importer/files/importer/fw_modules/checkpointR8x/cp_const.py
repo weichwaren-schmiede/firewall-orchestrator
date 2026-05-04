@@ -1,10 +1,7 @@
-details_level = "standard"
 details_level_objects = "standard"
 details_level_group_objects = "full"
 use_object_dictionary = True
 with_hits = True
-
-dummy_ip = "0.0.0.0/32"
 
 # the following is the static across all installations unique any obj uid
 # cannot fetch the Any object via API (<=1.7) at the moment
@@ -66,9 +63,6 @@ svc_obj_table_names = local_svc_obj_table_names + global_svc_obj_table_names
 local_api_obj_types = (
     local_nw_obj_table_names + local_svc_obj_table_names + time_obj_table_names
 )  # all obj table names to look at during import
-global_api_obj_types = (
-    global_nw_obj_table_names + global_svc_obj_table_names
-)  # all global obj table names to look at during import
 api_obj_types = (
     nw_obj_table_names + svc_obj_table_names + time_obj_table_names
 )  # all obj table names to look at during import

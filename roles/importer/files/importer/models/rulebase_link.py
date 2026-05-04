@@ -37,7 +37,7 @@ class RulebaseLink(BaseModel):
     is_section: bool
     created: int
     removed: int | None = None
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)  # noqa: DC
 
     def to_dict(self) -> dict[str, Any]:
         return {

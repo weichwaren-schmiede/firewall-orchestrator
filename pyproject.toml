@@ -120,6 +120,8 @@ ignore = [
 fixable = ["ALL"]
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+external = ["DC"]
+
 [tool.ruff.lint.per-file-ignores]
 "roles/importer/files/importer/test/**.py" = ["SLF001", "PLR2004"]
 
@@ -137,3 +139,6 @@ pythonpath = [
     "roles/importer/files/importer",
     "roles/importer/files/importer/test",
 ]
+
+[tool.deadcode]
+ignore-names = ["model_config"]

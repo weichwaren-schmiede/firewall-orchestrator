@@ -264,19 +264,6 @@ def get_ip_of_obj(fwo_api_call: FwoApiCall, obj: dict[str, Any], mgm_id: int | N
     return ip_addr
 
 
-def make_host(ip_in: str) -> str | None:
-    ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(ip_in)
-
-    # If it's a valid address, append the appropriate CIDR notation
-    if isinstance(ip_obj, ipaddress.IPv4Address):
-        return f"{ip_in}/32"
-    if isinstance(
-        ip_obj, ipaddress.IPv6Address
-    ):  # TODO: check if just else is sufficient # type: ignore  # noqa: PGH003
-        return f"{ip_in}/128"
-    return None
-
-
 def convert_timestamp(timestamp: str) -> str:
     """
     In CP, time objects' time stamps are interpreted per-gateway for their local time zone. This means, the timestamps

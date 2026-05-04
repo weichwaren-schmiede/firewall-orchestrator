@@ -136,12 +136,6 @@ def fwconfig_builder() -> FwConfigBuilder:
 
 
 @pytest.fixture
-def fwconfig_import_rule_mock() -> FwConfigImportRule:
-    fw_config_import_rule: FwConfigImportRule = unittest.mock.create_autospec(FwConfigImportRule)
-    return fw_config_import_rule
-
-
-@pytest.fixture
 def fwconfig_import_rule(
     import_state: ImportState,
     management_state: ManagementState,

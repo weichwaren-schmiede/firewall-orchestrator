@@ -1,5 +1,3 @@
-import ast
-import json
 from typing import Any
 
 from fwo_base import sanitize, sort_and_join_refs
@@ -461,53 +459,3 @@ def resolve_nwobj_uid_to_name(nw_obj_uid: str) -> str:
         return uid_to_name_map[nw_obj_uid]
     FWOLogger.warning("could not resolve network object with uid " + nw_obj_uid)
     return ""
-
-
-# delete_v: left here only for nat case
-def check_and_add_section_header(
-    src_rulebase: dict[str, Any],
-    target_rulebase: Rulebase,
-    layer_name: str,
-    import_id: str,
-    section_header_uids: set[str],
-):
-    # TODO: re-implement
-    raise NotImplementedError("check_and_add_section_header is not implemented yet.")
-
-
-def insert_section_header_rule(
-    _target_rulebase: Rulebase,
-    _section_name: str,
-    _layer_name: str,
-    _import_id: str,
-    _src_rulebase_uid: str,
-    _section_header_uids: set[str],
-    _parent_uid: str,
-):
-    # TODO: re-implement
-    return
-
-
-def ensure_json(raw: str) -> Any:
-    """
-    Tries to parse the given string as valid JSON.
-    Falls back to ast.literal_eval() if the JSON is using single quotes
-    or is otherwise not strictly compliant.
-
-    Args:
-        raw: The input string containing JSON-like data.
-
-    Returns:
-        The parsed Python object (e.g., dict, list, str, int, etc.).
-
-    Raises:
-        ValueError: If neither JSON parsing nor literal_eval() succeed.
-
-    """
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        try:
-            return ast.literal_eval(raw)
-        except (ValueError, SyntaxError) as e:
-            raise ValueError(f"Invalid JSON or literal: {e}") from e

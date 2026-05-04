@@ -32,7 +32,6 @@ class ImportState:
     last_full_import_id: int
     last_full_import_date: str | None = None
     last_successful_import: str | None = None
-    is_full_import: bool = False
     is_initial_import: bool = False
     responsible_for_importing: bool = True
     input_file: str | None = None
@@ -43,7 +42,6 @@ class ImportState:
         self.statistics_controller: ImportStatisticsController = ImportStatisticsController()
         self.start_time: int = int(time.time())
         self.management_map: dict[str, int] = {}
-        self.rulebase_to_gateway_map: dict[int, list[int]] = {}
         self.data_retention_days: int = 30
 
         try:  # get mgm_details (fw-type, port, ip, user credentials):

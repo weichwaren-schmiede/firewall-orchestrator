@@ -2,7 +2,6 @@ import copy
 import unittest.mock
 from typing import Any
 
-import pytest
 from fwo_api import FwoApi
 from fwo_api_call import FwoApiCall
 from model_controllers.fwconfig_import_rule import FwConfigImportRule
@@ -17,12 +16,6 @@ from test.utils.rule_helper_functions import insert_rule_in_config, move_rule_in
 from test.utils.test_utils import mock_get_graphql_code
 
 
-@pytest.fixture
-def mock_graphql(mocker: MockerFixture):
-    mock_get_graphql_code(mocker, "query { rulebase_update_diffs }")
-
-
-@pytest.fixture
 def mock_uid2id_mapper_response(uid2id_mapper: Uid2IdMapper, fwconfig_import_rule: FwConfigImportRule):
     uid2id_mapper.get_rulebase_id = unittest.mock.Mock(return_value=69)
     fwconfig_import_rule.uid2id_mapper.get_network_object_id = unittest.mock.Mock(return_value=42)
@@ -30,7 +23,6 @@ def mock_uid2id_mapper_response(uid2id_mapper: Uid2IdMapper, fwconfig_import_rul
     fwconfig_import_rule.uid2id_mapper.get_service_object_id = unittest.mock.Mock(return_value=84)
 
 
-@pytest.fixture
 def mock_api_connection_response(api_connection: FwoApi):
     def api_connection_side_effect(
         query: str,
@@ -150,7 +142,6 @@ def mock_api_connection_response(api_connection: FwoApi):
     api_connection.call = unittest.mock.Mock(side_effect=api_connection_side_effect)
 
 
-@pytest.fixture
 def mock_fwconfig_import_rule_side_effects(fwconfig_import_rule: FwConfigImportRule):
     def side_effect_mark_rules_removed(removed_rule_uids: list[str]) -> tuple[int, list[int]]:
         changes = 0
@@ -174,8 +165,7 @@ def mock_fwconfig_import_rule_side_effects(fwconfig_import_rule: FwConfigImportR
     fwconfig_import_rule.add_new_rules = unittest.mock.Mock(side_effect=side_effect_add_new_rules)
 
 
-@pytest.fixture
-def mock_api_call_response(api_call: FwoApiCall):
+def mock_api_call_response(api_call: FwoApiCall):  # noqa: DC
     def api_call_side_effect(
         query: str,  # noqa: ARG001
         query_variables: dict[str, dict[str, Any]],
@@ -303,13 +293,17 @@ class TestFwconfigImportRuleUpdateRulebaseDiffOldMigration:
         management_state: ManagementState,
         fwconfig_import_rule: FwConfigImportRule,
         fwconfig_builder: FwConfigBuilder,
-        mock_graphql: None,  # noqa: ARG002
-        mock_uid2id_mapper_response: None,  # noqa: ARG002
-        mock_api_connection_response: None,  # noqa: ARG002
-        mock_fwconfig_import_rule_side_effects: None,  # noqa: ARG002
-        mock_api_call_response: None,  # noqa: ARG002
+        mocker: MockerFixture,
     ):
+
         # Arrange
+
+        mock_get_graphql_code(mocker, "query { rulebase_update_diffs }")
+        mock_uid2id_mapper_response(management_state.uid2id_mapper, fwconfig_import_rule)
+        mock_api_connection_response(global_state.fwo_api)
+        mock_fwconfig_import_rule_side_effects(fwconfig_import_rule)
+        mock_api_call_response(global_state.fwo_api_call)
+
         config, _ = fwconfig_builder.build_config(
             uid2id_mapper=management_state.uid2id_mapper,
             network_object_count=10,
