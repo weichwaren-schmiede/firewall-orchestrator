@@ -1,8 +1,13 @@
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
-from fw_modules.fortiadom5ff.fmgr_rule import extract_nat_config_fields, parse_nat_rules_in_rulebase, rule_parse_last_hit
+from fw_modules.fortiadom5ff.fmgr_rule import (
+    extract_nat_config_fields,
+    parse_nat_rules_in_rulebase,
+    rule_parse_last_hit,
+)
 from fw_modules.fortiadom5ff.fwcommon import to_time_object
 from fwo_exceptions import ImportInterruptionError
 from models.rulebase import Rulebase
@@ -185,7 +190,7 @@ def test_parse_nat_rules_in_rulebase_keeps_translation_metadata_on_translated_ru
         "policies": [],
         "rules": [],
     }
-    normalized_config_global = {"network_objects": [], "zone_objects": [], "policies": [], "rules": []}
+    normalized_config_global: dict[str, list[Any]] = {"network_objects": [], "zone_objects": [], "policies": [], "rules": []}
     native_rulebase = {
         "data": [
             {
