@@ -190,7 +190,12 @@ def test_parse_nat_rules_in_rulebase_keeps_translation_metadata_on_translated_ru
         "policies": [],
         "rules": [],
     }
-    normalized_config_global: dict[str, list[Any]] = {"network_objects": [], "zone_objects": [], "policies": [], "rules": []}
+    normalized_config_global: dict[str, list[Any]] = {
+        "network_objects": [],
+        "zone_objects": [],
+        "policies": [],
+        "rules": [],
+    }
     native_rulebase = {
         "data": [
             {

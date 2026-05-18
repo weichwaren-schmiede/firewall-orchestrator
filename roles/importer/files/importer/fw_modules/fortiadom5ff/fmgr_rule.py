@@ -276,7 +276,12 @@ def get_nat_translated_source(
             poolname = [poolname]
         translated_src_list = sorted(poolname)
         translated_src_refs_list = [
-            find_addr_ref(pool, is_v4=True, normalized_config_adom=normalized_config_adom, normalized_config_global=normalized_config_global)
+            find_addr_ref(
+                pool,
+                is_v4=True,
+                normalized_config_adom=normalized_config_adom,
+                normalized_config_global=normalized_config_global,
+            )
             for pool in translated_src_list
         ]
         return translated_src_list, translated_src_refs_list
@@ -755,7 +760,9 @@ def find_addr_ref(
     normalized_config_global: dict[str, Any],
 ) -> str:
     for nw_obj in normalized_config_adom["network_objects"] + normalized_config_global.get("network_objects", []):
-        if addr == nw_obj["obj_name"] and ((is_v4 and ip_type(nw_obj) == ip_v4_type) or (not is_v4 and ip_type(nw_obj) == ip_v6_type)):
+        if addr == nw_obj["obj_name"] and (
+            (is_v4 and ip_type(nw_obj) == ip_v4_type) or (not is_v4 and ip_type(nw_obj) == ip_v6_type)
+        ):
             return nw_obj["obj_uid"]
     raise FwoImporterErrorInconsistenciesError(f"No ref found for '{addr}'.")
 
