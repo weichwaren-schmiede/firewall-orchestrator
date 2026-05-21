@@ -151,6 +151,9 @@ namespace FWO.Data
         [JsonProperty("rule"), JsonPropertyName("rule")]
         public Rule? ParentRule { get; set; }
 
+        [JsonProperty("ruleByXlateRule"), JsonPropertyName("ruleByXlateRule")]
+        public Rule? TranslatedRule { get; set; }
+
         [JsonProperty("rule_owners"), JsonPropertyName("rule_owners")]
         public RuleOwner?[] RuleOwner { get; set; } = [];
 
@@ -227,6 +230,7 @@ namespace FWO.Data
             Rulebase = rule.Rulebase;
             LastChangeAdmin = rule.LastChangeAdmin;
             ParentRule = rule.ParentRule;
+            TranslatedRule = rule.TranslatedRule;
             DisplayOrderNumberString = rule.DisplayOrderNumberString;
             DisplayOrderNumber = rule.DisplayOrderNumber;
             Certified = rule.Certified;

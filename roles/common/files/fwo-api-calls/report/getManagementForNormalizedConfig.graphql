@@ -188,6 +188,9 @@ fragment ruleFragment on rule {
     rule_last_hit
   }
   rule_comment
+  ruleByXlateRule {
+    rule_uid
+  }
   rule_from_zones {
     zone {
       zone_name

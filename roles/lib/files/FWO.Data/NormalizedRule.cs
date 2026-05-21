@@ -137,7 +137,7 @@ namespace FWO.Data
                 RuleSrcZone = rule.RuleFromZones?.Length > 0 ? string.Join("|", rule.RuleFromZones.Select(z => z.Content.Name).Order()) : null,
                 RuleDstZone = rule.RuleToZones?.Length > 0 ? string.Join("|", rule.RuleToZones.Select(z => z.Content.Name).Order()) : null,
                 RuleHeadText = rule.SectionHeader,
-                XlateRule = rule.XlateRule,
+                XlateRule = rule.TranslatedRule?.Uid ?? rule.XlateRule,
                 NatRule = rule.NatRule,
                 AccessRule = rule.AccessRule
             };
