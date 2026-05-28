@@ -16,8 +16,6 @@ from query_analyzer import QueryAnalyzer
 if TYPE_CHECKING:
     from states.import_state import ImportState
 
-# NOTE: we cannot import ImportState(Controller) here due to circular refs
-
 
 class FwoApiCall:
     def __init__(self, api: FwoApi):

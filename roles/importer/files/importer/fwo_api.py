@@ -18,12 +18,6 @@ JSON_CONTENT_TYPE = "application/json"
 
 # this class is used for making calls to the FWO API (will supersede fwo_api.py)
 class FwoApi:
-    fwo_api_url: str
-    fwo_jwt: str
-    query_info: dict[str, Any]
-    query_analyzer: QueryAnalyzer
-    fwo_user_mgmt_api_uri: str
-
     def __init__(
         self,
         api_uri: str,
