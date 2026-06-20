@@ -71,7 +71,7 @@ class FwConfigImportGateway:
         self.update_routing_diffs()
         self.update_removed_gateways()
 
-    def update_rulebase_link_diffs(self) -> tuple[list[dict[str, Any]], list[int]]:
+    def update_rulebase_link_diffs_old(self) -> tuple[list[dict[str, Any]], list[int]]:
         if self._global_state.normalized_config is None:
             raise FwoImporterError("normalized_config is None in update_rulebase_link_diffs")
         if self._global_state.previous_config is None:
@@ -100,6 +100,34 @@ class FwConfigImportGateway:
             if previous_config_gw:
                 self._create_remove_args(gw, previous_config_gw, gw_id, required_removes)
 
+        return required_inserts, required_removes
+
+    def update_rulebase_link_diffs(self):
+        if self._global_state.normalized_config is None:
+            raise FwoImporterError("normalized_config is None in update_rulebase_link_diffs")
+        if self._global_state.previous_config is None:
+            raise FwoImporterError("previous_config is None in update_rulebase_link_diffs")
+
+        required_inserts: list[dict[str, Any]] = []
+        required_removes: list[int] = []
+
+        for gw in self._global_state.normalized_config.gateways:
+            previous_config_gw = next(
+                (p_gw for p_gw in self._global_state.previous_config.gateways if gw.Uid == p_gw.Uid), None
+            )
+
+            if gw in self._global_state.previous_config.gateways:
+                # this check finds all changes in gateway (including rulebase link changes)
+                # gateway found with exactly same properties in previous config
+                continue
+
+            to_remove = list(
+                set(previous_config_gw.RulebaseLinks if previous_config_gw else []) - set(gw.RulebaseLinks)
+            )
+            to_add = list(set(gw.RulebaseLinks) - set(previous_config_gw.RulebaseLinks if previous_config_gw else []))
+            
+
+            
         return required_inserts, required_removes
 
     def _create_insert_args(
