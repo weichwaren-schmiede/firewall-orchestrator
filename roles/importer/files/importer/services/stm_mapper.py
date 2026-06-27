@@ -1,4 +1,3 @@
-import networking.graphql.import_state_queries as queries
 from fwo_api_call import FwoApiCall
 from fwo_exceptions import FwoImporterError
 from fwo_log import FWOLogger
@@ -28,14 +27,14 @@ class StmMapper:
 
     def set_action_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_ACTION_MAP, query_variables={})
+            result = fwo_api_call.client.get_action_map()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_action: {e!s}")
             raise FwoImporterError(f"Error while getting stm_action: {e!s}")
 
         action_map: dict[str, int] = {}
-        for action in result["data"]["stm_action"]:
-            action_map.update({action["action_name"]: action["action_id"]})
+        for action in result.stm_action:
+            action_map.update({action.action_name: action.action_id})
         self.actions = action_map
 
     def lookup_action(self, action_str: str) -> int:
@@ -47,14 +46,14 @@ class StmMapper:
 
     def set_track_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_TRACK_MAP, query_variables={})
+            result = fwo_api_call.client.get_track_map()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_track: {e!s}")
             raise FwoImporterError(f"Error while getting stm_track: {e!s}")
 
         track_map: dict[str, int] = {}
-        for track in result["data"]["stm_track"]:
-            track_map.update({track["track_name"]: track["track_id"]})
+        for track in result.stm_track:
+            track_map.update({track.track_name: track.track_id})
         self.tracks = track_map
 
     def lookup_track(self, track_str: str) -> int:
@@ -66,14 +65,14 @@ class StmMapper:
 
     def set_link_type_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_LINK_TYPE_MAP, query_variables={})
+            result = fwo_api_call.client.get_link_type()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_link_type: {e!s}")
             raise FwoImporterError(f"Error while getting stm_link_type: {e!s}")
 
         link_map: dict[str, int] = {}
-        for track in result["data"]["stm_link_type"]:
-            link_map.update({track["name"]: track["id"]})
+        for track in result.stm_link_type:
+            link_map.update({track.name: track.id})
         self.link_types = link_map
 
     def lookup_link_type(self, link_uid: str) -> int:
@@ -85,14 +84,14 @@ class StmMapper:
 
     def set_color_ref_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_COLOR_MAP, query_variables={})
+            result = fwo_api_call.client.get_colors()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_color: {e!s}")
             raise FwoImporterError(f"Error while getting stm_color: {e!s}")
 
         color_map: dict[str, int] = {}
-        for color in result["data"]["stm_color"]:
-            color_map.update({color["color_name"]: color["color_id"]})
+        for color in result.stm_color:
+            color_map.update({color.color_name: color.color_id})
         self.color_map = color_map
 
     def lookup_color_id_unresolved(self, color_str: str) -> int | None:
@@ -103,14 +102,14 @@ class StmMapper:
 
     def set_network_obj_type_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_NETWORK_OBJ_TYPE_MAP, query_variables={})
+            result = fwo_api_call.client.get_network_obj_type_map()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_obj_typ: {e!s}")
             raise FwoImporterError(f"Error while getting stm_obj_typ: {e!s}")
 
         nwobj_type_map: dict[str, int] = {}
-        for nw_type in result["data"]["stm_obj_typ"]:
-            nwobj_type_map.update({nw_type["obj_typ_name"]: nw_type["obj_typ_id"]})
+        for nw_type in result.stm_obj_typ:
+            nwobj_type_map.update({nw_type.obj_typ_name: nw_type.obj_typ_id})
         self.network_obj_type_map = nwobj_type_map
 
     def lookup_network_obj_type_id(self, obj_type_str: str) -> int:
@@ -122,14 +121,15 @@ class StmMapper:
 
     def set_service_obj_type_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_SERVICE_OBJ_TYPE_MAP, query_variables={})
+            result = fwo_api_call.client.get_service_obj_type_map()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_svc_typ: {e!s}")
             raise FwoImporterError(f"Error while getting stm_svc_typ: {e!s}")
 
         svc_type_map: dict[str, int] = {}
-        for svc_type in result["data"]["stm_svc_typ"]:
-            svc_type_map.update({svc_type["svc_typ_name"]: svc_type["svc_typ_id"]})
+        for svc_type in result.stm_svc_typ:
+            if svc_type.svc_typ_name is not None:
+                svc_type_map.update({svc_type.svc_typ_name: svc_type.svc_typ_id})
         self.service_obj_type_map = svc_type_map
 
     def lookup_service_obj_type_id(self, svc_type_str: str) -> int:
@@ -141,14 +141,15 @@ class StmMapper:
 
     def set_user_obj_type_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_USER_OBJ_TYPE_MAP, query_variables={})
+            result = fwo_api_call.client.get_user_obj_type_map()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_usr_typ: {e!s}")
             raise FwoImporterError(f"Error while getting stm_usr_typ: {e!s}")
 
         user_type_map: dict[str, int] = {}
-        for usr_type in result["data"]["stm_usr_typ"]:
-            user_type_map.update({usr_type["usr_typ_name"]: usr_type["usr_typ_id"]})
+        for usr_type in result.stm_usr_typ:
+            if usr_type.usr_typ_name is not None:
+                user_type_map.update({usr_type.usr_typ_name: usr_type.usr_typ_id})
         self.user_obj_type_map = user_type_map
 
     def lookup_user_obj_type_id(self, usr_type_str: str) -> int:
@@ -160,14 +161,15 @@ class StmMapper:
 
     def set_protocol_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_PROTOCOL_MAP, query_variables={})
+            result = fwo_api_call.client.get_ip_protocols()
         except Exception as e:
             FWOLogger.error(f"Error while getting stm_ip_proto: {e!s}")
             raise FwoImporterError(f"Error while getting stm_ip_proto: {e!s}")
 
         protocol_map: dict[str, int] = {}
-        for proto in result["data"]["stm_ip_proto"]:
-            protocol_map.update({proto["ip_proto_name"].lower(): proto["ip_proto_id"]})
+        for proto in result.stm_ip_proto:
+            if proto.ip_proto_name is not None:
+                protocol_map.update({proto.ip_proto_name.lower(): proto.ip_proto_id})
         self.protocol_map = protocol_map
 
     def lookup_protocol_id(self, proto_str: str) -> int:
@@ -182,17 +184,17 @@ class StmMapper:
     # and also            key = gateway.name and value = gateway.id
     def set_gateway_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(query=queries.GET_GATEWAY_MAP, query_variables={})
+            result = fwo_api_call.client.get_gateway_map()
         except Exception:
             FWOLogger.error("Error while getting gateways")
             self.gateway_map = {}
             raise FwoImporterError("Error while getting gateways")
 
         m = {}
-        for gw in result["data"]["device"]:
-            if gw["mgm_id"] not in m:
-                m[gw["mgm_id"]] = {}
-            m[gw["mgm_id"]][gw["dev_uid"]] = gw["dev_id"]
+        for gw in result.device:
+            if gw.mgm_id not in m:
+                m[gw.mgm_id] = {}
+            m[gw.mgm_id][gw.dev_uid] = gw.dev_id
         self.gateway_map = m
 
     def lookup_gateway_id(self, gw_uid: str, mgm_id: int) -> int:

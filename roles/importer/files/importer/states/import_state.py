@@ -2,8 +2,6 @@ import time
 import traceback
 from datetime import datetime, timezone
 
-import networking.graphql.import_state_mutations as mutations
-import networking.graphql.import_state_queries as queries
 from dateutil import parser
 from fwo_api import FwoApi
 from fwo_api_call import FwoApiCall
@@ -119,30 +117,25 @@ class ImportState:
     # creates a dict with key = management.uid  and value = management.id
     def set_management_map(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(
-                query=queries.GET_MANAGEMENT_MAP,
-                query_variables={"mgmId": self.mgm_details.mgm_id},
-            )
+            result = fwo_api_call.client.get_management_map(mgm_id=self.mgm_details.mgm_id)
         except Exception:
             FWOLogger.error("Error while getting managements")
             self.management_map = {}
             raise FwoImporterError("Error while getting managements")
 
         m: dict[str, int] = {}
-        mgm = result["data"]["management"][0]
-        m.update({mgm["mgm_uid"]: mgm["mgm_id"]})
-        for sub_mgr in mgm["sub_managers"]:
-            m.update({sub_mgr["mgm_uid"]: sub_mgr["mgm_id"]})
+        mgm = result.management[0]
+        m.update({mgm.mgm_uid: mgm.mgm_id})
+        for sub_mgr in mgm.sub_managers:
+            m.update({sub_mgr.mgm_uid: sub_mgr.mgm_id})
 
         self.management_map = m
 
     def delete_import(self, fwo_api_call: FwoApiCall):
         try:
-            result = fwo_api_call.call(
-                mutations.DELETE_IMPORT,
-                query_variables={"importId": self.import_id},
-            )
-            _ = result["data"]["delete_import_control"]["affected_rows"]
+            result = fwo_api_call.client.delete_import(import_id=self.import_id)
+            if result.delete_import_control is None:
+                raise FwoImporterError(f"fwo_api: failed to unlock import for import id {self.import_id!s}")
             FWOLogger.info(f"removed import with id {self.import_id!s} completely")
         except Exception:
             FWOLogger.exception("fwo_api: failed to unlock import for import id " + str(self.import_id))

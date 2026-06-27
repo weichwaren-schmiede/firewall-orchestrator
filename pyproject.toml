@@ -18,7 +18,8 @@ exclude = [
     "scripts/acquire_lock.py",
     "scripts/gh-search.py",
     "scripts/json_pretty_print.py",
-    "scripts/release_lock.py"    
+    "scripts/release_lock.py",
+    "roles/importer/files/importer/networking/graphql_client"
 ]
 
 typeCheckingMode = "strict"
@@ -26,7 +27,7 @@ reportMissingImports = false
 reportMissingTypeStubs = true
 
 [tool.ruff]
-required-version = "0.15.0"
+required-version = "0.15.17"
 line-length = 120
 indent-width = 4
 target-version = "py310"
@@ -63,7 +64,8 @@ exclude = [
     "scripts/acquire_lock.py",
     "scripts/gh-search.py",
     "scripts/json_pretty_print.py",
-    "scripts/release_lock.py"
+    "scripts/release_lock.py",
+    "roles/importer/files/importer/networking/graphql_client",
 ]
 
 [tool.ruff.lint]
@@ -138,3 +140,13 @@ pythonpath = [
     "roles/importer/files/importer",
     "roles/importer/files/importer/test",
 ]
+
+[tool.ariadne-codegen] # HASURA_ADMIN_SECRET=<your secret> PYTHONPATH=. ariadne-codegen && python codegen_plugins/fix_imports.py
+queries_path = "roles/importer/files/importer/networking/graphql/"
+remote_schema_url = "https://localhost:9443/api/v1/graphql"
+remote_schema_headers = { "x-hasura-admin-secret" = "$HASURA_ADMIN_SECRET" }
+remote_schema_verify_ssl = false
+target_package_path = "roles/importer/files/importer/networking/"
+target_package_name = "graphql_client"
+async_client = false
+plugins = ["codegen_plugins.AbsoluteImportsPlugin"]

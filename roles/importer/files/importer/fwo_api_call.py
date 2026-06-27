@@ -24,6 +24,7 @@ class FwoApiCall:
         self.api = api
         self.query_info = {}
         self.query_analyzer = QueryAnalyzer()
+        self.client = api.graphql_client
 
     def get_mgm_ids(self, query_variables: dict[str, list[Any]] | None = None) -> list[int]:
         # from 9.0 do not import sub-managers separately

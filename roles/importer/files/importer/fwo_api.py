@@ -11,6 +11,7 @@ import requests
 from fwo_const import FWO_API_HTTP_IMPORT_TIMEOUT, FWO_HTTP_TIMEOUT
 from fwo_exceptions import FwoApiLoginFailedError, FwoApiServiceUnavailableError, FwoApiTimeoutError, FwoImporterError
 from fwo_log import FWOLogger
+from networking.graphql_client.client import Client
 from query_analyzer import QueryAnalyzer
 
 JSON_CONTENT_TYPE = "application/json"
@@ -39,6 +40,14 @@ class FwoApi:
         self.query_info = {}
         self.query_analyzer = QueryAnalyzer()
         self.fwo_user_mgmt_api_uri = fwo_user_mgmt_api_uri
+        self.graphql_client = Client(
+            url=api_uri,
+            headers={
+                "Content-Type": JSON_CONTENT_TYPE,
+                "Authorization": f"Bearer {self.fwo_jwt}",
+                "x-hasura-role": "importer",
+            },
+        )
 
     def call(
         self,
