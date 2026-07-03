@@ -127,9 +127,6 @@ namespace FWO.Data
         [JsonProperty("rulebase_id"), JsonPropertyName("rulebase_id")]
         public int RulebaseId { get; set; }
 
-        [JsonProperty("rule_num"), JsonPropertyName("rule_num")]
-        public int RuleOrderNumber { get; set; }
-
         [JsonProperty("rule_enforced_on_gateways"), JsonPropertyName("rule_enforced_on_gateways")]
         public DeviceWrapper[] EnforcingGateways { get; set; } = [];
 
@@ -249,7 +246,6 @@ namespace FWO.Data
             NatRule = rule.NatRule;
             AccessRule = rule.AccessRule;
             RulebaseId = rule.RulebaseId;
-            RuleOrderNumber = rule.RuleOrderNumber;
             EnforcingGateways = rule.EnforcingGateways;
             InstallOn = rule.InstallOn;
             Time = rule.Time;

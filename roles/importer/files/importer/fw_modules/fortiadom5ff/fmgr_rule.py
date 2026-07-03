@@ -223,7 +223,6 @@ def add_implicit_deny_rule(
     )
 
     rule_normalized = RuleNormalized(
-        rule_num=0,
         rule_num_numeric=0,
         rule_disabled=False,
         rule_src_neg=False,
@@ -309,7 +308,6 @@ def parse_single_rule(
 
     # Create the normalized access rule
     rule_normalized = RuleNormalized(
-        rule_num=0,
         rule_num_numeric=0,
         rule_disabled=rule_disabled,
         rule_src_neg=rule_src_neg,
