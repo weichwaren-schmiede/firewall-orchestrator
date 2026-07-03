@@ -934,8 +934,7 @@ def parse_nat_rulebase(
     normalized_config_global: dict[str, Any],
 ) -> list[RuleNormalized]:
     nat_rules: list[RuleNormalized] = []
-    rule_number = 0
-    for rule_number, rule_orig in enumerate(nat_rulebase):
+    for _, rule_orig in enumerate(nat_rulebase):
         rule_src_list, rule_src_refs_list = rule_parse_addresses(
             rule_orig, "src", normalized_config_adom, normalized_config_global, is_nat=True
         )  # because of is_nat = True, this will look for orig-addr
@@ -957,7 +956,6 @@ def parse_nat_rulebase(
         )
 
         rule_normalized = RuleNormalized(
-            rule_num=rule_number,
             rule_num_numeric=0,
             rule_disabled=False,
             rule_src_neg=False,
@@ -990,7 +988,6 @@ def parse_nat_rulebase(
         )
 
         xlate_rule = RuleNormalized(
-            rule_num=rule_number,
             rule_num_numeric=0,
             rule_disabled=False,
             rule_src_neg=False,
@@ -1248,7 +1245,6 @@ def parse_nat_rules_in_rulebase(
         rule_translated_uid = f"{rule_uid}-translated"
 
         rule_original = RuleNormalized(
-            rule_num=rule_num,
             rule_num_numeric=0,
             rule_disabled=rule_disabled,
             rule_src_neg=False,
@@ -1284,7 +1280,6 @@ def parse_nat_rules_in_rulebase(
         # Create translated rule (translation phase)
         # Keep the original destination and service; translate the source to the NAT pool.
         rule_translated = RuleNormalized(
-            rule_num=rule_num,
             rule_num_numeric=0,
             rule_disabled=rule_disabled,
             rule_src_neg=False,
