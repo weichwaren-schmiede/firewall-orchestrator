@@ -166,7 +166,6 @@ namespace FWO.Test
                 AccessRule = false,
                 XlateRule = "1366",
                 TranslatedRule = new Rule { Uid = "translated-rule" },
-                RuleOrderNumber = 7,
                 OrderNumber = 7,
                 Disabled = false,
                 SourceNegated = false,
