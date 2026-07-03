@@ -347,8 +347,10 @@ def parse_single_rule(
 
     parent_rule_uid = _parse_parent_rule_uid(parent_uid, native_rule=native_rule)
 
+    nat_rule = bool(native_rule.get("nat_rule", False))
+    access_rule = bool(native_rule.get("access_rule", True))
     # new in v5.5.1:
-    rule_type = native_rule.get("rule_type", "access")
+    rule_type = native_rule.get("rule_type", "nat" if nat_rule else "access")
 
     comments = native_rule.get("comments")
     if comments == "":
@@ -385,8 +387,8 @@ def parse_single_rule(
         "last_change_admin": sanitize(last_change_admin),
         "parent_rule_uid": sanitize(parent_rule_uid),
         "last_hit": sanitize(last_hit),
-        "nat_rule": bool(native_rule.get("nat_rule", False)),
-        "access_rule": bool(native_rule.get("access_rule", True)),
+        "nat_rule": nat_rule,
+        "access_rule": access_rule,
     }
     if comments is not None:
         rule["rule_comment"] = sanitize(comments)
