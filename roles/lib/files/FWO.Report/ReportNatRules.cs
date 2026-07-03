@@ -28,21 +28,15 @@ namespace FWO.Report
 
                 foreach (var device in managementReport.Devices)
                 {
-                    if (device.RulebaseLinks != null)
+                    Rule[] deviceNatRules = GetCachedRulesForExport(device.Id, managementReport.Id);
+                    if (deviceNatRules.Length > 0)
                     {
-                        RulebaseLink? initialRulebaseLink = device.RulebaseLinks.FirstOrDefault(_ => _.IsInitial);
-                        if (initialRulebaseLink != null)
-                        {
-                            foreach (var rule in managementReport.Rulebases.FirstOrDefault(rb => rb.Id == initialRulebaseLink.NextRulebaseId)?.Rules ?? [])
-                            {
-                                AppendNatRuleHeadlineHtml(ref report, device.Name);
+                        AppendNatRuleHeadlineHtml(ref report, device.Name);
 
-                                report.AppendLine(ExportSingleRulebaseToHtml(GetRulesByRulebaseId(initialRulebaseLink.NextRulebaseId, managementReport), ruleDisplay, chapterNumber));
+                        report.AppendLine(ExportSingleRulebaseToHtml(deviceNatRules, ruleDisplay, chapterNumber));
 
-                                report.AppendLine("</table>");
-                                report.AppendLine("<hr>");
-                            }
-                        }
+                        report.AppendLine("</table>");
+                        report.AppendLine("<hr>");
                     }
                 }
                 // show all objects used in this management's rules

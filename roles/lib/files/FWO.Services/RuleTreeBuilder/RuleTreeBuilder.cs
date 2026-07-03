@@ -35,6 +35,7 @@ namespace FWO.Services.RuleTreeBuilder
         private const int OrderedLinkType = 2;
         private const int InlineLinkType = 3;
         private const int DomainLinkType = 5;
+        private const int NatLinkType = 6;
 
         /// <summary>
         /// Gets or sets the root node of the most recently built rule tree. The root itself is
@@ -304,6 +305,33 @@ namespace FWO.Services.RuleTreeBuilder
 
             EmitRules(rulebase, orderedLayerNode);
             TraverseSections(layerRulebaseId, orderedLayerNode);
+            TraverseNatRulebases(layerRulebaseId, orderedLayerNode);
+        }
+
+        /// <summary>
+        /// Attaches any NAT rulebases hanging off the supplied rulebase id. Importers express a
+        /// gateway's NAT policy as one or more rulebases reached through a "nat" typed link from
+        /// the access rulebase they logically belong to, rather than through the ordered/domain
+        /// layer chain. Unlike ordered layers, a single rulebase can fan out to several NAT
+        /// rulebases at once (e.g. one per Check Point NAT section), so every matching link is
+        /// followed rather than expecting exactly one successor.
+        ///
+        /// Each discovered NAT rulebase is rendered like an ordered layer (and may itself recurse
+        /// into further NAT rulebases), keeping the same header/section/inline machinery used for
+        /// access rulebases.
+        /// </summary>
+        private void TraverseNatRulebases(int fromRulebaseId, RuleTreeItem parentNode)
+        {
+            if (!StructuralLinksByFromRulebaseId.TryGetValue(fromRulebaseId, out List<RulebaseLink>? candidates))
+            {
+                return;
+            }
+
+            foreach (RulebaseLink natLink in candidates.Where(LinksToBeProcessed.Contains).Where(link => link.LinkType == NatLinkType).ToList())
+            {
+                RemoveLinkFromProcessingQueue(natLink);
+                ProcessOrderedLayer(natLink.NextRulebaseId, parentNode);
+            }
         }
 
         /// <summary>
@@ -355,6 +383,7 @@ namespace FWO.Services.RuleTreeBuilder
             AttachChild(parentNode, sectionNode);
 
             EmitRules(rulebase, sectionNode);
+            TraverseNatRulebases(sectionRulebaseId, sectionNode);
         }
 
         /// <summary>
@@ -413,6 +442,7 @@ namespace FWO.Services.RuleTreeBuilder
 
             EmitRules(rulebase, inlineLayerNode);
             TraverseSections(rulebase.Id, inlineLayerNode);
+            TraverseNatRulebases(rulebase.Id, inlineLayerNode);
         }
 
         /// <summary>

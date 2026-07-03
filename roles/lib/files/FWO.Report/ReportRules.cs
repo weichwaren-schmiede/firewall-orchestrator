@@ -212,6 +212,17 @@ namespace FWO.Report
             return [.. flattenedRules.Where(rule => string.IsNullOrEmpty(rule.SectionHeader))];
         }
 
+        /// <summary>
+        /// Returns the flattened, real (non-header) rules cached by <see cref="TryBuildRuleTree"/>
+        /// for one device/management pair. Subclasses use this instead of re-deriving rules from
+        /// rulebase links so they stay consistent with the tree traversal (which also resolves NAT
+        /// rulebases attached via "nat" typed rulebase links).
+        /// </summary>
+        protected static Rule[] GetCachedRulesForExport(int deviceId, int managementId)
+        {
+            return _rulesCache.TryGetValue((deviceId, managementId), out Rule[]? rules) ? rules : [];
+        }
+
         protected virtual void SetMgtQueryVars(ManagementReport management)
         {
             Query.QueryVariables[QueryVar.MgmId] = management.Id;

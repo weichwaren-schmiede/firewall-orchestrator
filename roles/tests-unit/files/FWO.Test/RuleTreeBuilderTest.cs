@@ -141,6 +141,32 @@ namespace FWO.Test
         }
 
         [Test]
+        public void BuildRuleTree_NatRulebaseFanOut_IncludesNatRulesUnderLayer()
+        {
+            RulebaseReport[] rulebases =
+            [
+                Rulebase(1, "Layer-1", 10),
+                Rulebase(2, "NAT"),
+                Rulebase(3, "NAT-Section-A", 20),
+                Rulebase(4, "NAT-Section-B", 30)
+            ];
+
+            RulebaseLink[] links =
+            [
+                OrderedLayerInitialLink(gatewayId: 1, nextRulebaseId: 1),
+                NatLink(gatewayId: 1, fromRulebaseId: 1, nextRulebaseId: 2),
+                NatLink(gatewayId: 1, fromRulebaseId: 2, nextRulebaseId: 3),
+                NatLink(gatewayId: 1, fromRulebaseId: 2, nextRulebaseId: 4)
+            ];
+
+            List<Rule> flattenedRules = _ruleTreeBuilder.BuildRuleTree(rulebases, links, 1, 1);
+            Rule[] realRules = flattenedRules.Where(rule => string.IsNullOrEmpty(rule.SectionHeader)).ToArray();
+
+            Assert.That(realRules.Select(rule => rule.Id), Is.EquivalentTo(new long[] { 10, 20, 30 }));
+            Assert.That(_ruleTreeBuilder.LinksToBeProcessed, Is.Empty);
+        }
+
+        [Test]
         public void BuildRuleTree_TwoOrderedLayers_PreservesTopLevelLayerChain()
         {
             RulebaseReport[] rulebases =
@@ -404,6 +430,21 @@ namespace FWO.Test
                 FromRuleId = null,
                 NextRulebaseId = nextRulebaseId,
                 LinkType = 4,
+                IsInitial = false,
+                IsGlobal = false,
+                IsSection = false
+            };
+        }
+
+        private static RulebaseLink NatLink(int gatewayId, int fromRulebaseId, int nextRulebaseId)
+        {
+            return new RulebaseLink
+            {
+                GatewayId = gatewayId,
+                FromRulebaseId = fromRulebaseId,
+                FromRuleId = null,
+                NextRulebaseId = nextRulebaseId,
+                LinkType = 6,
                 IsInitial = false,
                 IsGlobal = false,
                 IsSection = false
