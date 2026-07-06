@@ -181,7 +181,7 @@ def parse_nat_rule(
         rule_match,
         rulebase,
         rulebase.name,
-        rulebase.uid,
+        None,
         gateway,
         native_config["policies"],
     )
@@ -189,7 +189,7 @@ def parse_nat_rule(
         rule_xlate,
         rulebase,
         rulebase.name,
-        rulebase.uid,
+        None,
         gateway,
         native_config["policies"],
     )

@@ -348,7 +348,7 @@ def parse_single_rule(
     parent_rule_uid = _parse_parent_rule_uid(parent_uid, native_rule=native_rule)
 
     # new in v5.5.1:
-    rule_type = native_rule.get("rule_type", "access")
+    rule_type = "nat" if native_rule.get("nat_rule") else "access"
 
     comments = native_rule.get("comments")
     if comments == "":
