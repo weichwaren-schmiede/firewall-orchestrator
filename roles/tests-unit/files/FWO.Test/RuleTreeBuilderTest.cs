@@ -194,6 +194,30 @@ namespace FWO.Test
         }
 
         [Test]
+        public void BuildRuleTree_PolicyInitialLink_NatRulebaseIsSiblingOfPolicyHeaderNotNestedUnderIt()
+        {
+            RulebaseReport[] rulebases =
+            [
+                Rulebase(1, "Policy"),
+                Rulebase(2, "Layer-1", 10),
+                Rulebase(3, "NAT", 20)
+            ];
+
+            RulebaseLink[] links =
+            [
+                PolicyInitialLink(gatewayId: 1, nextRulebaseId: 1),
+                OrderedLayerLink(gatewayId: 1, fromRulebaseId: 1, nextRulebaseId: 2),
+                NatLink(gatewayId: 1, fromRulebaseId: 1, nextRulebaseId: 3)
+            ];
+
+            _ = _ruleTreeBuilder.BuildRuleTree(rulebases, links, 1, 1);
+
+            RuleTreeItem policyHeaderNode = _ruleTreeBuilder.RuleTree.Children.Single(child => child.IsPolicyHeader);
+            Assert.That(_ruleTreeBuilder.RuleTree.Children.Select(child => child.Header), Is.EqualTo(new[] { "Policy", "NAT", "Layer-1" }));
+            Assert.That(policyHeaderNode.Children.Select(child => child.Header), Does.Not.Contain("NAT"));
+        }
+
+        [Test]
         public void BuildRuleTree_TwoOrderedLayers_PreservesTopLevelLayerChain()
         {
             RulebaseReport[] rulebases =

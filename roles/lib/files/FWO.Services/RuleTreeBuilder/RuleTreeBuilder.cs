@@ -332,6 +332,10 @@ namespace FWO.Services.RuleTreeBuilder
         /// sibling of the real ordered layers under the root (mirroring how every top-level layer
         /// is attached), flagging it this way is enough for the flattening pass to render it as a
         /// visible, unnumbered row without shifting the numbering of the layers that follow it.
+        ///
+        /// NAT rulebases reached from the policy container are attached to <paramref name="parentNode"/>
+        /// (the policy header's own parent) rather than to the policy header itself, so the NAT
+        /// policy renders as a sibling of the standard policy instead of being nested underneath it.
         /// </summary>
         private void ProcessPolicyLayer(int policyRulebaseId, RuleTreeItem parentNode)
         {
@@ -341,7 +345,7 @@ namespace FWO.Services.RuleTreeBuilder
 
             EmitRules(rulebase, policyHeaderNode);
             TraverseSections(policyRulebaseId, policyHeaderNode);
-            TraverseNatRulebases(policyRulebaseId, policyHeaderNode);
+            TraverseNatRulebases(policyRulebaseId, parentNode);
         }
 
         /// <summary>
