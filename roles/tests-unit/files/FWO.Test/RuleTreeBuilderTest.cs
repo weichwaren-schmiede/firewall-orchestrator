@@ -188,7 +188,7 @@ namespace FWO.Test
 
             Assert.That(flattenedRules.Select(rule => rule.SectionHeader), Does.Contain("Policy"));
             Assert.That(flattenedRules.Single(rule => rule.SectionHeader == "Policy").DisplayOrderNumberString, Is.EqualTo(string.Empty));
-            Assert.That(_ruleTreeBuilder.RuleTree.Children.Select(child => child.Header), Is.EqualTo(new[] { "Policy", "Layer-1", "Layer-2" }));
+            Assert.That(_ruleTreeBuilder.RuleTree.Children.Select(child => child.Header), Is.EqualTo(["Policy", "Layer-1", "Layer-2"]));
             Assert.That(_ruleTreeBuilder.RuleTree.Children[0].IsPolicyHeader, Is.True);
             Assert.That(flattenedRules.Where(rule => rule.SectionHeader != "Policy").Select(rule => rule.DisplayOrderNumberString), Is.EqualTo(kExpectedTwoLayerDisplayOrderNumbers));
         }
@@ -213,7 +213,7 @@ namespace FWO.Test
             _ = _ruleTreeBuilder.BuildRuleTree(rulebases, links, 1, 1);
 
             RuleTreeItem policyHeaderNode = _ruleTreeBuilder.RuleTree.Children.Single(child => child.IsPolicyHeader);
-            Assert.That(_ruleTreeBuilder.RuleTree.Children.Select(child => child.Header), Is.EqualTo(new[] { "Policy", "NAT", "Layer-1" }));
+            Assert.That(_ruleTreeBuilder.RuleTree.Children.Select(child => child.Header), Is.EqualTo(["Policy", "NAT", "Layer-1"]));
             Assert.That(policyHeaderNode.Children.Select(child => child.Header), Does.Not.Contain("NAT"));
         }
 
