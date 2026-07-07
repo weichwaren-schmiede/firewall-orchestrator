@@ -400,7 +400,7 @@ namespace FWO.Report.Filter
                         id: mgm_id
                         uid: mgm_uid
                         name: mgm_name
-                        devices ({devWhereStringDefault}) 
+                        devices ({GetDevWhereFilter(filter.ReportParams.DeviceFilter)})
                         {{
                             id: dev_id
                             name: dev_name
