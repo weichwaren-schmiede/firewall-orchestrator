@@ -30,7 +30,7 @@ def get_initial_nat_rulebase_link(gateway: dict[str, Any], normalized_config: di
         (
             link
             for link in normalized_gateway["RulebaseLinks"]
-            if link.get("is_initial") and link.get("link_type") == "ordered"
+            if link.get("is_initial") and link.get("link_type") == "policy"
         ),
         None,
     )

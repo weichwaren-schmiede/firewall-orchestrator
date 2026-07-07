@@ -161,12 +161,12 @@ class TestGetInitialNatRulebaseLink:
             ]
         }
 
-    def test_returns_initial_ordered_link(self):
+    def test_returns_initial_policy_link(self):
         gateway = {"uid": "gw-1"}
         normalized_config = self._make_normalized_config_with_gateway(
             "gw-1",
             [
-                {"is_initial": True, "link_type": "ordered", "to_rulebase_uid": "rb-access"},
+                {"is_initial": True, "link_type": "policy", "to_rulebase_uid": "rb-access"},
                 {"is_initial": False, "link_type": "nat", "to_rulebase_uid": "rb-nat"},
             ],
         )
@@ -184,12 +184,12 @@ class TestGetInitialNatRulebaseLink:
 
         assert result is None
 
-    def test_returns_none_when_no_initial_ordered_link(self):
+    def test_returns_none_when_no_initial_policy_link(self):
         gateway = {"uid": "gw-1"}
         normalized_config = self._make_normalized_config_with_gateway(
             "gw-1",
             [
-                {"is_initial": False, "link_type": "ordered", "to_rulebase_uid": "rb-1"},
+                {"is_initial": False, "link_type": "policy", "to_rulebase_uid": "rb-1"},
                 {"is_initial": True, "link_type": "nat", "to_rulebase_uid": "rb-nat"},
             ],
         )

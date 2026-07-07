@@ -563,7 +563,7 @@ def define_initial_rulebase_links(
             "from_rulebase_uid": None,
             "from_rule_uid": None,
             "to_rulebase_uid": policy["uid"],
-            "type": "ordered",
+            "type": "policy",
             "is_global": is_global,
             "is_initial": True,
             "is_section": False,

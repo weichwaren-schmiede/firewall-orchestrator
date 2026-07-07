@@ -9,9 +9,10 @@ namespace FWO.Services.RuleTreeBuilder
     /// Builds rule trees by traversing the rulebase-link graph that importers normalize for a
     /// device. The builder does not rely on the incoming order of <see cref="RulebaseLink"/>
     /// records. Instead, it reconstructs the visible tree exclusively from the graph semantics:
-    /// exactly one initial link points at the first ordered layer, ordered/domain links chain
-    /// top-level layers, section links chain rulebases that belong to the same layer or inline
-    /// layer, and inline links attach nested rulebases to specific rules through
+    /// exactly one initial link points at the first ordered layer (or, when typed as a policy
+    /// link, at an unrendered synthetic policy rulebase that precedes it), ordered/domain links
+    /// chain top-level layers, section links chain rulebases that belong to the same layer or
+    /// inline layer, and inline links attach nested rulebases to specific rules through
     /// <see cref="RulebaseLink.FromRuleId"/>.
     ///
     /// The tree-building pass focuses only on structural correctness. Hierarchical display
@@ -36,6 +37,7 @@ namespace FWO.Services.RuleTreeBuilder
         private const int InlineLinkType = 3;
         private const int DomainLinkType = 5;
         private const int NatLinkType = 6;
+        private const int PolicyLinkType = 7;
 
         /// <summary>
         /// Gets or sets the root node of the most recently built rule tree. The root itself is
@@ -254,6 +256,12 @@ namespace FWO.Services.RuleTreeBuilder
         ///
         /// Sections are not advanced here. They are considered content of the current layer and
         /// are therefore handled inside <see cref="ProcessOrderedLayer"/>.
+        ///
+        /// When the initial link is of <see cref="PolicyLinkType"/>, its target rulebase is the
+        /// synthetic, always-empty rulebase importers create to represent the policy itself (e.g.
+        /// Check Point's package). That rulebase is still rendered as a header row so users can
+        /// see it, but - like a section header - it never consumes a dotted hierarchy number, so
+        /// the first real ordered layer beneath it stays numbered "1".
         /// </summary>
         private void TraverseOrderedLayers()
         {
@@ -266,10 +274,19 @@ namespace FWO.Services.RuleTreeBuilder
             RemoveLinkFromProcessingQueue(initialLink);
 
             int currentLayerRulebaseId = initialLink.NextRulebaseId;
+            bool isPolicyLayer = initialLink.LinkType == PolicyLinkType;
 
             while (true)
             {
-                ProcessOrderedLayer(currentLayerRulebaseId, RuleTree);
+                if (isPolicyLayer)
+                {
+                    ProcessPolicyLayer(currentLayerRulebaseId, RuleTree);
+                    isPolicyLayer = false;
+                }
+                else
+                {
+                    ProcessOrderedLayer(currentLayerRulebaseId, RuleTree);
+                }
 
                 RulebaseLink? nextLayerLink = FindNextLayerLink(currentLayerRulebaseId);
                 if (nextLayerLink == null)
@@ -306,6 +323,25 @@ namespace FWO.Services.RuleTreeBuilder
             EmitRules(rulebase, orderedLayerNode);
             TraverseSections(layerRulebaseId, orderedLayerNode);
             TraverseNatRulebases(layerRulebaseId, orderedLayerNode);
+        }
+
+        /// <summary>
+        /// Processes the synthetic policy-container rulebase the same way an ordered layer would
+        /// be processed, except the created header is flagged with <see cref="RuleTreeItem.IsPolicyHeader"/>
+        /// instead of <see cref="RuleTreeItem.IsOrderedLayerHeader"/>. Since it is attached as a
+        /// sibling of the real ordered layers under the root (mirroring how every top-level layer
+        /// is attached), flagging it this way is enough for the flattening pass to render it as a
+        /// visible, unnumbered row without shifting the numbering of the layers that follow it.
+        /// </summary>
+        private void ProcessPolicyLayer(int policyRulebaseId, RuleTreeItem parentNode)
+        {
+            RulebaseReport rulebase = ResolveRulebase(policyRulebaseId);
+            RuleTreeItem policyHeaderNode = CreatePolicyHeaderNode(rulebase);
+            AttachChild(parentNode, policyHeaderNode);
+
+            EmitRules(rulebase, policyHeaderNode);
+            TraverseSections(policyRulebaseId, policyHeaderNode);
+            TraverseNatRulebases(policyRulebaseId, policyHeaderNode);
         }
 
         /// <summary>
@@ -568,6 +604,24 @@ namespace FWO.Services.RuleTreeBuilder
         }
 
         /// <summary>
+        /// Creates the header node for the synthetic policy-container rulebase and its placeholder
+        /// rule. It is visible like an ordered-layer header, but flagged with
+        /// <see cref="RuleTreeItem.IsPolicyHeader"/> so the flattening pass renders it without
+        /// consuming a dotted hierarchy number.
+        /// </summary>
+        private static RuleTreeItem CreatePolicyHeaderNode(RulebaseReport rulebase)
+        {
+            return new RuleTreeItem
+            {
+                Header = rulebase.Name ?? string.Empty,
+                Data = CreateHeaderPlaceholderRule(rulebase.Name),
+                IsPolicyHeader = true,
+                IsExpanded = true,
+                IsVisible = true
+            };
+        }
+
+        /// <summary>
         /// Creates a section header node and its synthetic placeholder rule. The placeholder rule
         /// is rendered exactly like an ordered-layer header row later, but it remains a child of
         /// the layer or inline-layer node that owns the section chain.
@@ -652,7 +706,7 @@ namespace FWO.Services.RuleTreeBuilder
         /// Numbering rules:
         /// - ordered-layer headers consume top-level dotted hierarchy numbers: 1, 2, 3, ...
         /// - real rules consume the next nested dotted hierarchy number within their current visible scope
-        /// - section headers are visible rows but do not consume a dotted hierarchy number
+        /// - section headers and the synthetic policy header are visible rows but do not consume a dotted hierarchy number
         /// - rules inside a section continue numbering in the surrounding layer/inline scope
         /// - inline-layer roots are structural only and do not consume a number themselves
         /// - children beneath an inline root inherit the owning rule’s position as their base
@@ -681,8 +735,9 @@ namespace FWO.Services.RuleTreeBuilder
         /// Transparent nodes behave as follows:
         /// - inline-layer roots are skipped as rows and simply forward their descendants into the
         ///   current numbering scope
-        /// - section headers are emitted as visible rows but do not increment the dotted display
-        ///   number; their children continue numbering in the surrounding scope
+        /// - section headers and the synthetic policy header are emitted as visible rows but do not
+        ///   increment the dotted display number; their children continue numbering in the
+        ///   surrounding scope
         ///
         /// Numbered nodes (ordered-layer headers and real rules) increment the current scope,
         /// receive a new dotted position, and then start a fresh nested child scope for their own
@@ -701,7 +756,7 @@ namespace FWO.Services.RuleTreeBuilder
                     continue;
                 }
 
-                if (childNode.IsSectionHeader)
+                if (childNode.IsSectionHeader || childNode.IsPolicyHeader)
                 {
                     if (suppressEmptyHeaders && !HasRealRuleDescendant(childNode))
                     {
