@@ -5,6 +5,7 @@ query getTimeBasedRulesByOwner {
       owner: { active: { _eq: true } }
       rule: {
         removed: { _is_null: true }
+        access_rule: { _eq: true }
         rule_times: {
           removed: { _is_null: true }
           time_object: { removed: { _is_null: true }, end_time: { _is_null: false } }
@@ -39,6 +40,7 @@ query getTimeBasedRulesByOwner {
         where: {
           removed: { _is_null: true }
           object: { removed: { _is_null: true } }
+          access_rule: { _eq: true }
         }
         order_by: { object: { obj_name: asc } }
       ) {

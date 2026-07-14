@@ -195,7 +195,7 @@ namespace FWO.Report.Filter
                             id
                             {query.OpenRulesTable}
                                 {limitOffsetString}
-                                where: {{ access_rule: {{_eq: true}} {query.RuleWhereStatement} }} 
+                                where: {{ nat_rule: {{_eq: false}} {query.RuleWhereStatement} }} 
                                 order_by: {{ rule_num_numeric: asc }} )
                             {{
                                 mgm_id: mgm_id

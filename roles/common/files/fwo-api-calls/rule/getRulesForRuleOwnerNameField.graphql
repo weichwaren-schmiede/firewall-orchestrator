@@ -1,5 +1,5 @@
 query getRulesForRuleOwnerNameField {
-  rule(where: { removed: { _is_null: true  } }) {
+  rule(where: { removed: { _is_null: true  } access_rule: { _eq: true }}) {
     rule_id
     rule_name
     removed
