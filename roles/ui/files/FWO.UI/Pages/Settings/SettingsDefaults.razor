@@ -81,7 +81,7 @@
         </div>
         <div class="form-group row" data-toggle="tooltip" title="@(userConfig.PureLine("H5411"))">
             <label class="col-form-label col-sm-4">@(userConfig.GetText("color_scheme")):</label>
-            <div class="col-sm-2">
+            <div class="col-sm-3">
                 <Dropdown ElementType="ColorScheme" ElementToString="@(c => userConfig.GetText(c.Name ))" @bind-SelectedElement="selectedColorScheme" Elements="ColorScheme.AvailableSchemes">
                     <ElementTemplate Context="colorScheme">
                         @(userConfig.GetText(colorScheme.Name))
@@ -363,7 +363,6 @@ else
 
                 configData.DefaultLanguage = selectedLanguage.Name;
                 configData.ColorScheme = selectedColorScheme.Name;
-                StateHasChanged();
                 configData.AutoDiscoverStartAt = autoDiscStartDate.Date.Add(autoDiscStartTime.TimeOfDay);
                 availableModules = [];
                 foreach (Module module in modulesVisibleDict.Keys)
