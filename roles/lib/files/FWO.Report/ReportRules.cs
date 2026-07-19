@@ -222,7 +222,7 @@ namespace FWO.Report
         /// rulebase links so they stay consistent with the tree traversal (which also resolves NAT
         /// rulebases attached via "nat" typed rulebase links).
         /// </summary>
-        protected static Rule[] GetCachedRulesForExport(int deviceId, int managementId)
+        protected Rule[] GetCachedRulesForExport(int deviceId, int managementId)
         {
             return _rulesCache.TryGetValue((deviceId, managementId), out Rule[]? rules) ? rules : [];
         }
