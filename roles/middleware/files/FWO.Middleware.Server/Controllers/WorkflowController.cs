@@ -155,6 +155,7 @@ namespace FWO.Middleware.Server.Controllers
         {
             using UserConfig userConfig = UserConfig.ForGlobalSettings(globalConfig, actionApiConnection, globalConfig.DefaultLanguage);
             WfHandler wfHandler = CreateWorkflowHandler(actionApiConnection, userConfig, phase, result);
+            wfHandler.userConfig.User.WorkflowVisibilityGroupIds = GetClaimIds(User, "x-hasura-workflow-visibility-groups").ToList();
             if (!await InitWorkflowHandler(wfHandler, result))
             {
                 return result;
@@ -172,11 +173,16 @@ namespace FWO.Middleware.Server.Controllers
                 return result;
             }
 
-            (WfStatefulObject? statefulObject, FwoOwner? owner, long? actionTicketId, string? userGrpDn) =
-                ResolveActionContext(wfHandler, ticket, parameters, scope);
+            (WfStatefulObject? statefulObject, FwoOwner? owner, long? actionTicketId, string? userGrpDn) = ResolveActionContext(wfHandler, ticket, parameters, scope);
             if (statefulObject == null)
             {
                 SetWarning(result, $"Stateful object could not be resolved. Scope: {scope}, ObjectId: {parameters.ObjectId}, TicketId: {ticket.Id}.");
+                return result;
+            }
+
+            if (!CallerCanAccessVisibility(User, wfHandler, scope, statefulObject))
+            {
+                SetWarning(result, $"User is not authorized to access workflow visibility for scope '{scope}' and state {statefulObject.StateId}.");
                 return result;
             }
 
@@ -186,7 +192,64 @@ namespace FWO.Middleware.Server.Controllers
             }
 
             result.Success = await ExecuteResolvedAction(wfHandler, parameters, scope, statefulObject, owner, actionTicketId, userGrpDn);
+            if (result.Success)
+            {
+                await ContinueAfterInternalWorkIfNeeded(actionApiConnection, userConfig, ticket, parameters, scope, statefulObject, result);
+            }
             return result;
+        }
+
+        private static async Task ContinueAfterInternalWorkIfNeeded(ApiConnection actionApiConnection, UserConfig userConfig,
+            WfTicket ticket, WorkflowActionParameters parameters, WfObjectScopes scope, WfStatefulObject statefulObject, WorkflowActionResult result)
+        {
+            long reqTaskId = scope switch
+            {
+                WfObjectScopes.RequestTask => parameters.ObjectId,
+                WfObjectScopes.ImplementationTask when statefulObject is WfImplTask implTask => implTask.ReqTaskId,
+                _ => 0
+            };
+
+            if (reqTaskId <= 0)
+            {
+                return;
+            }
+
+            WfReqTask? affectedReqTask = ResolveAffectedReqTask(ticket, scope, statefulObject, reqTaskId);
+            if (!IsInternalWorkTask(affectedReqTask))
+            {
+                return;
+            }
+
+            try
+            {
+                using ExternalRequestHandler extRequestHandler = new(userConfig, actionApiConnection);
+                await extRequestHandler.ContinueAfterInternalWorkCompletion(parameters.TicketId, reqTaskId);
+            }
+            catch (Exception exception)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Could not continue external request chain after internal work. {exception.Message}";
+                AddWorkflowMessage(result, exception, "Internal Work", "Could not continue external request chain after internal work.", true);
+            }
+        }
+
+        private static WfReqTask? ResolveAffectedReqTask(WfTicket ticket, WfObjectScopes scope, WfStatefulObject statefulObject, long reqTaskId)
+        {
+            return scope switch
+            {
+                WfObjectScopes.RequestTask => statefulObject as WfReqTask
+                    ?? ticket.Tasks.FirstOrDefault(task => task.Id == reqTaskId),
+
+                WfObjectScopes.ImplementationTask when statefulObject is WfImplTask implTask
+                    => ticket.Tasks.FirstOrDefault(task => task.Id == implTask.ReqTaskId),
+
+                _ => null
+            };
+        }
+
+        private static bool IsInternalWorkTask(WfReqTask? task)
+        {
+            return task?.GetAddInfoValue(AdditionalInfoKeys.FwConfigChangeTarget) == ManagementFwConfigChangeTargets.InternalWork;
         }
 
         private WfHandler CreateWorkflowHandler(ApiConnection actionApiConnection, UserConfig userConfig, WorkflowPhases phase, WorkflowActionResult result)
@@ -319,6 +382,20 @@ namespace FWO.Middleware.Server.Controllers
             return editableOwnerIds.Count > 0 && ticket.Tasks.Any(task => CallerOwnsTask(task, editableOwnerIds));
         }
 
+        private static bool CallerCanAccessVisibility(ClaimsPrincipal user, WfHandler wfHandler, WfObjectScopes scope, WfStatefulObject statefulObject)
+        {
+            if (!wfHandler.userConfig.ReqVisibilityBased)
+            {
+                return true;
+            }
+
+            StateMatrix stateMatrix = scope == WfObjectScopes.Ticket ? wfHandler.MasterStateMatrix : wfHandler.ActStateMatrix;
+            HashSet<int> visibilityGroupIds = GetClaimIds(user, "x-hasura-workflow-visibility-groups");
+            List<string> userGroups = GetClaimStrings(user, "x-hasura-groups");
+            return WorkflowVisibilityHelper.CanAccessStatefulObject(statefulObject, stateMatrix, visibilityGroupIds, wfHandler.GetWorkflowExclusiveVisibilityGroupIds())
+                || IsExplicitlyAssigned(user, userGroups, statefulObject);
+        }
+
         private static bool CallerCanUseRole(ClaimsPrincipal user, string executionMode, string role)
         {
             return ExecutionModeHelper.HasAnyRoleInExecutionMode(ExecutionModeHelper.GetUserRoles(user), executionMode, [role]);
@@ -353,6 +430,48 @@ namespace FWO.Middleware.Server.Controllers
         private static int? GetClaimInt(ClaimsPrincipal user, string claimName)
         {
             return int.TryParse(GetClaimValue(user, claimName), out int value) ? value : null;
+        }
+
+        private static List<string> GetClaimStrings(ClaimsPrincipal user, string claimName)
+        {
+            string? claimValue = GetClaimValue(user, claimName);
+            if (string.IsNullOrWhiteSpace(claimValue))
+            {
+                return [];
+            }
+
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<string>>(claimValue) ?? [];
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return [];
+            }
+        }
+
+        private static bool IsExplicitlyAssigned(ClaimsPrincipal user, List<string> userGroups, WfStatefulObject statefulObject)
+        {
+            return IsAssignedToCurrentUser(user, statefulObject.CurrentHandler)
+                || IsAssignedToCurrentUserGroup(userGroups, statefulObject.AssignedGroup)
+                || (statefulObject is WfApproval approval && (IsAssignedToCurrentUserDn(user, approval.ApproverDn)
+                    || IsAssignedToCurrentUserGroup(userGroups, approval.ApproverGroup)));
+        }
+
+        private static bool IsAssignedToCurrentUser(ClaimsPrincipal user, UiUser? handler)
+        {
+            int? userId = GetClaimInt(user, "x-hasura-user-id");
+            return handler != null && ((userId != null && handler.DbId == userId) || IsAssignedToCurrentUserDn(user, handler.Dn));
+        }
+
+        private static bool IsAssignedToCurrentUserDn(ClaimsPrincipal user, string? dn)
+        {
+            return DistName.DnEquals(dn, GetClaimValue(user, "x-hasura-uuid"));
+        }
+
+        private static bool IsAssignedToCurrentUserGroup(List<string> userGroups, string? groupDn)
+        {
+            return !string.IsNullOrWhiteSpace(groupDn) && userGroups.Any(group => DistName.DnEquals(group, groupDn));
         }
 
         private static string? GetClaimValue(ClaimsPrincipal user, string claimName)

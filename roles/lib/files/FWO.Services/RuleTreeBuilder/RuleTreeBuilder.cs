@@ -27,8 +27,8 @@ namespace FWO.Services.RuleTreeBuilder
     /// </list>
     ///
     /// The builder is scoped as a service, so per-build state is reinitialized inside
-    /// <see cref="BuildRuleTree"/>. The only state preserved across builds is the cache of
-    /// completed trees and their flattened rule rows.
+    /// <see cref="BuildRuleTree"/>. Completed trees and their flattened rule rows are kept only
+    /// for the active report generation and can be discarded with <see cref="ClearCachedRuleTrees"/>.
     /// </summary>
     public class RuleTreeBuilder : IRuleTreeBuilder
     {
@@ -126,6 +126,17 @@ namespace FWO.Services.RuleTreeBuilder
         }
 
         /// <summary>
+        /// Clears all cached trees and flattened rule rows. UI report generation calls this once
+        /// before building a fresh report so a long-lived scoped builder does not retain every
+        /// previously rendered report for the lifetime of the Blazor circuit.
+        /// </summary>
+        public void ClearCachedRuleTrees()
+        {
+            RuleTreeCache.Clear();
+            FlattenedRules.Clear();
+        }
+
+        /// <summary>
         /// Builds a rule tree for one management/device pair from normalized rulebases and
         /// rulebase links. The method creates a fresh per-build graph view, traverses ordered
         /// layers, sections, and inline layers by following their graph relationships, then
@@ -147,6 +158,11 @@ namespace FWO.Services.RuleTreeBuilder
 
             TraverseOrderedLayers();
             List<Rule> flattenedRules = FlattenTreeAndAssignDisplayNumbers(suppressEmptyHeaders);
+
+            if (RuleTreeCache.TryGetValue((managementId, deviceId), out RuleTreeItem? previousRuleTree))
+            {
+                FlattenedRules.Remove(previousRuleTree);
+            }
 
             RuleTreeCache[(managementId, deviceId)] = RuleTree;
             FlattenedRules[RuleTree] = [.. flattenedRules];
