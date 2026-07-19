@@ -451,6 +451,9 @@ namespace FWO.Config.Api.Data
         [JsonProperty("modRecertActive"), JsonPropertyName("modRecertActive")]
         public bool ModRecertActive { get; set; } = false;
 
+        [JsonProperty("colorScheme"), JsonPropertyName("colorScheme"), UserConfigData]
+        public string ColorScheme { get; set; } = "color_scheme_blue";
+
         [JsonProperty("modRecertExpectAllModelled"), JsonPropertyName("modRecertExpectAllModelled")]
         public bool ModRecertExpectAllModelled { get; set; } = false;
 
