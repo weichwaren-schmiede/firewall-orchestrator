@@ -6103,6 +6103,8 @@ INSERT INTO txt VALUES ('H5411', 'German',  'Standardsprache: Die Sprache, die n
 INSERT INTO txt VALUES ('H5411', 'English', 'Default Language: The language which every user gets at first login.
     After login each user can define its own preferred <a href="/help/settings/language">language</a>.
 ');
+INSERT INTO txt VALUES ('H5411a', 'German',  'Farbschema: Legt das Standard-Farbschema der Benutzeroberfl&auml;che fest, das f&uuml;r alle Nutzer gilt.');
+INSERT INTO txt VALUES ('H5411a', 'English', 'Color Scheme: Defines the default color scheme of the user interface, which is valid for all users.');
 INSERT INTO txt VALUES ('H5412', 'German',  'UI - Pro Abruf geholte Elemente: Definiert die (maximale) Anzahl der Objekte, die bei der Reporterzeugung und beim Aufbau der rechten Randleiste in einem Schritt geholt werden.
     Dies kann genutzt werden, um die Performanz zu optimieren, wenn n&ouml;tig.
 ');

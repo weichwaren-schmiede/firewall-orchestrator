@@ -79,7 +79,7 @@
                 <input id="cbx_auto_fill_right_sidebar" type="checkbox" class="w-100" @bind="configData!.AutoFillRightSidebar">
             </div>
         </div>
-        <div class="form-group row" data-toggle="tooltip" title="@(userConfig.PureLine("H5411"))">
+        <div class="form-group row" data-toggle="tooltip" title="@(userConfig.PureLine("H5411a"))">
             <label class="col-form-label col-sm-4">@(userConfig.GetText("color_scheme")):</label>
             <div class="col-sm-3">
                 <Dropdown ElementType="ColorScheme" ElementToString="@(c => userConfig.GetText(c.Name ))" @bind-SelectedElement="selectedColorScheme" Elements="ColorScheme.AvailableSchemes">
