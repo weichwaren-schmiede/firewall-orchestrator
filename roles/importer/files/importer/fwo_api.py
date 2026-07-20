@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import json
 import string
 import time
 import traceback
-from collections.abc import Mapping
 from pprint import pformat
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import fwo_globals
 import requests
@@ -12,6 +13,9 @@ from fwo_const import FWO_API_HTTP_IMPORT_TIMEOUT, FWO_HTTP_TIMEOUT
 from fwo_exceptions import FwoApiLoginFailedError, FwoApiServiceUnavailableError, FwoApiTimeoutError, FwoImporterError
 from fwo_log import FWOLogger
 from query_analyzer import QueryAnalyzer
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 JSON_CONTENT_TYPE = "application/json"
 REDACTED_VALUE = "<redacted>"

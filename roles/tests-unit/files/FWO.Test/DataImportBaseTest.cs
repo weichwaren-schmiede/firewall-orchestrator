@@ -33,7 +33,7 @@ namespace FWO.Test
                 Assert.Ignore("Script execution test requires a Unix-like environment.");
             }
 
-            string tempDir = Path.Combine(Path.GetTempPath(), $"fwo-import-test-{Guid.NewGuid():N}");
+            string tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fwo-import-test-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
 
             try
@@ -150,6 +150,49 @@ namespace FWO.Test
             finally
             {
                 Directory.Delete(tempRoot, true);
+            }
+        }
+
+        [Test]
+        public void ImportPathPolicyAllowsOnlyConfiguredCustomizationRoots()
+        {
+            string fwoHome = CreateNonWorldWritableTempDirectory();
+            try
+            {
+                string customizingRoot = Path.Combine(fwoHome, "scripts", "customizing");
+                string etcRoot = Path.Combine(fwoHome, "etc");
+                string blockedRoot = Path.Combine(fwoHome, "importer");
+                Directory.CreateDirectory(customizingRoot);
+                Directory.CreateDirectory(etcRoot);
+                Directory.CreateDirectory(blockedRoot);
+
+                string customizingScript = Path.Combine(customizingRoot, "owners.py");
+                string etcFile = Path.Combine(etcRoot, "owners.json");
+                string blockedScript = Path.Combine(blockedRoot, "owners.py");
+                File.WriteAllText(customizingScript, "#!/usr/bin/env python3\n");
+                File.WriteAllText(etcFile, "{}");
+                File.WriteAllText(blockedScript, "#!/usr/bin/env python3\n");
+
+                List<string> allowedRoots = [customizingRoot, etcRoot];
+
+                Assert.DoesNotThrow(() => ImportPathPolicy.ValidateExistingImportFile(customizingScript, allowedRoots));
+                Assert.DoesNotThrow(() => ImportPathPolicy.ValidateExistingImportFile(etcFile, allowedRoots));
+                Assert.Throws<UnauthorizedAccessException>(() =>
+                    ImportPathPolicy.ValidateExistingImportFile(blockedScript, allowedRoots));
+                Assert.Throws<UnauthorizedAccessException>(() =>
+                    ImportPathPolicy.ValidateImportSourceShape(blockedScript, allowedRoots));
+                Assert.That(
+                    ImportPathPolicy.GetAllowedImportFileStems(allowedRoots),
+                    Is.EquivalentTo(new[]
+                    {
+                        Path.Combine(customizingRoot, "owners"),
+                        Path.Combine(etcRoot, "owners")
+                    })
+                );
+            }
+            finally
+            {
+                Directory.Delete(fwoHome, true);
             }
         }
 

@@ -7,7 +7,6 @@ from states.management_state import ManagementState
 
 def build_rule(rule_uid: str) -> RuleNormalized:
     return RuleNormalized(
-        rule_num=1,
         rule_num_numeric=1.0,
         rule_disabled=False,
         rule_src_neg=False,

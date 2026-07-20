@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import ast
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fwo_base import sanitize, sort_and_join_refs
 from fwo_const import DEFAULT_SECTION_HEADER_TEXT, LIST_DELIMITER
@@ -9,7 +11,9 @@ from fwo_log import FWOLogger
 from models.rule import RuleNormalized
 from models.rule_enforced_on_gateway import RuleEnforcedOnGatewayNormalized
 from models.rulebase import Rulebase
-from states.import_state import ImportState
+
+if TYPE_CHECKING:
+    from states.import_state import ImportState
 
 uid_to_name_map: dict[str, str] = {}
 
@@ -356,7 +360,6 @@ def parse_single_rule(
         last_hit = None
 
     rule: dict[str, Any] = {
-        "rule_num": 0,
         "rule_num_numeric": 0,
         "rulebase_name": sanitize(layer_name),
         "rule_disabled": not bool(native_rule["enabled"]),

@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from copy import deepcopy
 from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import fwo_const
 from fw_modules.fortiadom5ff import fmgr_getter
@@ -16,11 +18,13 @@ from model_controllers.fwconfigmanagerlist_controller import FwConfigManagerList
 from models.fw_common import FwCommon
 from models.fwconfig_normalized import FwConfigNormalized
 from models.fwconfigmanager import FwConfigManager
-from models.management import Management
 from models.time_object import TimeObject
-from states.global_state import GlobalState
-from states.import_state import ImportState
 from utils.conversion_utils import convert_list_to_dict
+
+if TYPE_CHECKING:
+    from models.management import Management
+    from states.global_state import GlobalState
+    from states.import_state import ImportState
 
 
 class FortiAdom5ffCommon(FwCommon):
@@ -246,8 +250,8 @@ def rewrite_native_config_obj_type_as_key(native_config: dict[str, Any]):
 
 
 def normalize_single_manager_config(
-    native_config: "dict[str, Any]",
-    native_config_global: "dict[str, Any]",
+    native_config: dict[str, Any],
+    native_config_global: dict[str, Any],
     normalized_config_adom: dict[str, Any],
     normalized_config_global: dict[str, Any],
     is_global_loop_iteration: bool,

@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 import ipaddress
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import fwo_const
 from fw_modules.checkpointR8x import cp_const
 from fw_modules.fortiadom5ff.fmgr_network import add_member_names_for_nw_group
-from fwo_api_call import FwoApiCall
 from fwo_base import cidr_to_range
 from fwo_const import ANY_IP_END, ANY_IP_START, LIST_DELIMITER
 from fwo_log import FWOLogger
 from models.time_object import TimeObject
+
+if TYPE_CHECKING:
+    from fwo_api_call import FwoApiCall
 
 
 def normalize_network_objects(

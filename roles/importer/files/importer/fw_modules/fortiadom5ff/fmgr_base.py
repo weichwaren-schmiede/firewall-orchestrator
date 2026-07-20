@@ -1,7 +1,11 @@
-from typing import Any
+from __future__ import annotations
 
-from fwo_api_call import FwoApiCall
+from typing import TYPE_CHECKING, Any
+
 from fwo_log import FWOLogger
+
+if TYPE_CHECKING:
+    from fwo_api_call import FwoApiCall
 
 
 # TODO: unused functions - remove?
