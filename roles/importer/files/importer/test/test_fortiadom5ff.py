@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=false
+
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -552,7 +554,12 @@ class TestAddressBuilders:
 
     def test_find_addr_ref_raises_when_not_found(self):
         with pytest.raises(FwoImporterErrorInconsistenciesError):
-            find_addr_ref("missing", is_v4=True, normalized_config_adom=_empty_normalized_config(), normalized_config_global=_empty_normalized_config())
+            find_addr_ref(
+                "missing",
+                is_v4=True,
+                normalized_config_adom=_empty_normalized_config(),
+                normalized_config_global=_empty_normalized_config(),
+            )
 
     def test_ip_type_defaults_to_v4_for_empty_ip(self):
         assert ip_type({"obj_ip": ""}) == fmgr_rule.ip_v4_type
@@ -575,15 +582,15 @@ class TestRulebaseLinkHelpers:
         assert fmgr_rule._should_skip_rulebase_link({"type": "ordered", "to_rulebase_uid": "y"}, ["x"]) is False
 
     def test_find_rulebase_to_parse_returns_match(self):
-        rulebases = [{"uid": "a", "data": []}, {"uid": "b", "data": []}]
+        rulebases: list[dict[str, Any]] = [{"uid": "a", "data": []}, {"uid": "b", "data": []}]
         assert fmgr_rule.find_rulebase_to_parse(rulebases, "b") == {"uid": "b", "data": []}
 
     def test_find_rulebase_to_parse_returns_empty_when_missing(self):
         assert fmgr_rule.find_rulebase_to_parse([{"uid": "a"}], "missing") == {}
 
     def test_find_rulebase_to_parse_for_link_uses_adom_first(self):
-        native_config = {"rulebases": [{"uid": "adom-rb", "data": []}]}
-        native_config_global = {"rulebases": [{"uid": "global-rb", "data": []}]}
+        native_config: dict[str, Any] = {"rulebases": [{"uid": "adom-rb", "data": []}]}
+        native_config_global: dict[str, Any] = {"rulebases": [{"uid": "global-rb", "data": []}]}
         rulebase, found_in_global = fmgr_rule._find_rulebase_to_parse_for_link(
             {"to_rulebase_uid": "adom-rb"}, native_config, native_config_global, is_global_loop_iteration=False
         )
@@ -591,8 +598,8 @@ class TestRulebaseLinkHelpers:
         assert found_in_global is False
 
     def test_find_rulebase_to_parse_for_link_falls_back_to_global(self):
-        native_config = {"rulebases": []}
-        native_config_global = {"rulebases": [{"uid": "global-rb", "data": []}]}
+        native_config: dict[str, Any] = {"rulebases": []}
+        native_config_global: dict[str, Any] = {"rulebases": [{"uid": "global-rb", "data": []}]}
         rulebase, found_in_global = fmgr_rule._find_rulebase_to_parse_for_link(
             {"to_rulebase_uid": "global-rb"}, native_config, native_config_global, is_global_loop_iteration=False
         )
@@ -600,8 +607,8 @@ class TestRulebaseLinkHelpers:
         assert found_in_global is True
 
     def test_find_rulebase_to_parse_for_link_skips_global_lookup_during_global_iteration(self):
-        native_config = {"rulebases": []}
-        native_config_global = {"rulebases": [{"uid": "global-rb", "data": []}]}
+        native_config: dict[str, Any] = {"rulebases": []}
+        native_config_global: dict[str, Any] = {"rulebases": [{"uid": "global-rb", "data": []}]}
         rulebase, found_in_global = fmgr_rule._find_rulebase_to_parse_for_link(
             {"to_rulebase_uid": "global-rb"}, native_config, native_config_global, is_global_loop_iteration=True
         )
@@ -609,8 +616,8 @@ class TestRulebaseLinkHelpers:
         assert found_in_global is False
 
     def test_append_normalized_rulebase_appends_to_global_when_found_in_global(self):
-        normalized_config_adom = {"policies": []}
-        normalized_config_global = {"policies": []}
+        normalized_config_adom: dict[str, Any] = {"policies": []}
+        normalized_config_global: dict[str, Any] = {"policies": []}
         rulebase = Rulebase(uid="rb", name="rb", mgm_uid="mgm")
         fmgr_rule._append_normalized_rulebase(
             normalized_config_adom, normalized_config_global, rulebase, found_rulebase_in_global=True
@@ -619,8 +626,8 @@ class TestRulebaseLinkHelpers:
         assert normalized_config_adom["policies"] == []
 
     def test_append_normalized_rulebase_appends_to_adom_by_default(self):
-        normalized_config_adom = {"policies": []}
-        normalized_config_global = {"policies": []}
+        normalized_config_adom: dict[str, Any] = {"policies": []}
+        normalized_config_global: dict[str, Any] = {"policies": []}
         rulebase = Rulebase(uid="rb", name="rb", mgm_uid="mgm")
         fmgr_rule._append_normalized_rulebase(
             normalized_config_adom, normalized_config_global, rulebase, found_rulebase_in_global=False
@@ -673,7 +680,7 @@ class TestParseRulebase:
     def test_parse_rulebase_skips_implicit_deny_when_found_in_global(self):
         normalized_config_adom = _empty_normalized_config()
         normalized_config_global = _empty_normalized_config()
-        rulebase_to_parse = {"data": []}
+        rulebase_to_parse: dict[str, Any] = {"data": []}
         normalized_rulebase = Rulebase(uid="rb-global", name="rb-global", mgm_uid="mgm")
 
         fmgr_rule.parse_rulebase(
@@ -839,7 +846,9 @@ class TestNormalizeRulebases:
         normalized_config_global["policies"] = [Rulebase(uid="rb-global", name="rb-global", mgm_uid="mgm-uid")]
         normalized_config_adom = _empty_normalized_config()
 
-        fmgr_rule.normalize_rulebases("mgm-uid", native_config, {}, normalized_config_adom, normalized_config_global, False)
+        fmgr_rule.normalize_rulebases(
+            "mgm-uid", native_config, {}, normalized_config_adom, normalized_config_global, False
+        )
 
         assert normalized_config_adom["policies"] == []
 
@@ -851,7 +860,14 @@ class TestNormalizeRulebases:
         normalized_config_global = _empty_normalized_config()
 
         fmgr_rule.normalize_rulebases_for_each_link_destination(
-            gateway, "mgm-uid", [], native_config, {}, False, normalized_config_adom, normalized_config_global
+            gateway,
+            "mgm-uid",
+            [],
+            native_config,
+            {},
+            False,
+            normalized_config_adom,
+            normalized_config_global,
         )
 
         assert normalized_config_adom["policies"] == []
@@ -866,7 +882,7 @@ class TestFindPackages:
         assert global_pkg == "gpkg"
 
     def test_find_packages_returns_empty_strings_when_package_info_missing(self):
-        structure = {"adom1": {"dev1": {"vdom1": {}}}}
+        structure: dict[str, Any] = {"adom1": {"dev1": {"vdom1": {}}}}
         assert fmgr_rule.find_packages(structure, "adom1", {"name": "dev1_vdom1"}) == ("", "")
 
     def test_find_packages_raises_when_device_not_found(self):
@@ -892,13 +908,13 @@ class TestRulebaseFetchHelpers:
         assert rulebases[0]["package"] == "pkg"
 
     def test_has_rulebase_data_removes_empty_global_rulebase(self):
-        rulebases = [{"type": "rb_v6_pkg", "data": []}]
+        rulebases: list[dict[str, Any]] = [{"type": "rb_v6_pkg", "data": []}]
         result = fmgr_rule.has_rulebase_data(rulebases, "rb_v6_pkg", is_global=True, version="v6", pkg_name="pkg")
         assert result is False
         assert rulebases == []
 
     def test_has_rulebase_data_keeps_empty_local_rulebase(self):
-        rulebases = [{"type": "rb_v6_pkg", "data": []}]
+        rulebases: list[dict[str, Any]] = [{"type": "rb_v6_pkg", "data": []}]
         result = fmgr_rule.has_rulebase_data(rulebases, "rb_v6_pkg", is_global=False, version="v6", pkg_name="pkg")
         assert result is False
         assert len(rulebases) == 1
@@ -924,7 +940,7 @@ class TestRulebaseFetchHelpers:
         assert link["is_initial"] is False
 
     def test_link_rulebase_links_only_versions_with_data(self):
-        rulebases = [
+        rulebases: list[dict[str, Any]] = [
             {"type": "rb_v4_pkg", "data": [{"x": 1}]},
             {"type": "rb_v6_pkg", "data": []},
         ]
@@ -938,7 +954,12 @@ class TestRulebaseFetchHelpers:
 class TestGetAndLinkRulebases:
     @staticmethod
     def _fake_update_config(
-        config_json: list[dict[str, Any]], _sid: str, _api_base_url: str, _api_path: str, result_name: str, **_kwargs: Any
+        config_json: list[dict[str, Any]],
+        _sid: str,
+        _api_base_url: str,
+        _api_path: str,
+        result_name: str,
+        **_kwargs: Any,
     ) -> None:
         config_json.append({"type": result_name, "data": [{"uuid": "native-rule"}]})
 
@@ -1110,7 +1131,9 @@ class TestNatMiscHelpers:
         normalized_config_adom = _empty_normalized_config()
         native_rule = {"uuid": "rule-1", "name": "rule-name"}
 
-        translated_ips, translated_uids = fmgr_rule.parse_nat_ip(["1.2.3.4", "255.255.255.255"], native_rule, normalized_config_adom)
+        translated_ips, translated_uids = fmgr_rule.parse_nat_ip(
+            ["1.2.3.4", "255.255.255.255"], native_rule, normalized_config_adom
+        )
 
         assert translated_ips == ["1.2.3.4/32"]
         assert translated_uids == ["rule-1_Translated_IP"]
@@ -1226,7 +1249,9 @@ class TestAsList:
 class TestGetNatTranslatedSource:
     def test_get_nat_translated_source_wraps_string_poolname(self):
         normalized_config_adom = _empty_normalized_config()
-        normalized_config_adom["network_objects"] = [{"obj_name": "pool-a", "obj_uid": "pool-a-uid", "obj_ip": "10.0.2.1/32"}]
+        normalized_config_adom["network_objects"] = [
+            {"obj_name": "pool-a", "obj_uid": "pool-a-uid", "obj_ip": "10.0.2.1/32"}
+        ]
         native_rule = {"ippool": 1, "poolname": "pool-a"}
 
         translated_src_list, translated_src_refs_list = fmgr_rule.get_nat_translated_source(
@@ -1238,7 +1263,9 @@ class TestGetNatTranslatedSource:
 
     def test_get_nat_translated_source_falls_back_to_source_addresses_without_ippool(self):
         normalized_config_adom = _empty_normalized_config()
-        normalized_config_adom["network_objects"] = [{"obj_name": "src-net", "obj_uid": "src-net-uid", "obj_ip": "10.0.0.0/24"}]
+        normalized_config_adom["network_objects"] = [
+            {"obj_name": "src-net", "obj_uid": "src-net-uid", "obj_ip": "10.0.0.0/24"}
+        ]
         native_rule = {"srcaddr": ["src-net"]}
 
         translated_src_list, translated_src_refs_list = fmgr_rule.get_nat_translated_source(
@@ -1253,10 +1280,12 @@ class TestParseNatRulesInRulebaseEdgeCases:
     def test_skips_rules_that_are_neither_snat_nor_dnat(self):
         normalized_config_adom = _empty_normalized_config()
         normalized_config_global = _empty_normalized_config()
-        rulebase_to_parse = {"data": [{"uuid": "plain-rule", "srcaddr": [], "dstaddr": []}]}
+        rulebase_to_parse: dict[str, Any] = {"data": [{"uuid": "plain-rule", "srcaddr": [], "dstaddr": []}]}
         normalized_nat_rulebase = Rulebase(uid="nat-rb", name="NAT", mgm_uid="mgm")
 
-        parse_nat_rules_in_rulebase(normalized_config_adom, normalized_config_global, rulebase_to_parse, normalized_nat_rulebase)
+        parse_nat_rules_in_rulebase(
+            normalized_config_adom, normalized_config_global, rulebase_to_parse, normalized_nat_rulebase
+        )
 
         assert normalized_nat_rulebase.rules == {}
 
@@ -1264,10 +1293,12 @@ class TestParseNatRulesInRulebaseEdgeCases:
         warning_mock = mocker.patch("fwo_log.FWOLogger.warning")
         normalized_config_adom = _empty_normalized_config()
         normalized_config_global = _empty_normalized_config()
-        rulebase_to_parse = {"data": [{"nat": 1, "srcaddr": [], "dstaddr": []}]}
+        rulebase_to_parse: dict[str, Any] = {"data": [{"nat": 1, "srcaddr": [], "dstaddr": []}]}
         normalized_nat_rulebase = Rulebase(uid="nat-rb", name="NAT", mgm_uid="mgm")
 
-        parse_nat_rules_in_rulebase(normalized_config_adom, normalized_config_global, rulebase_to_parse, normalized_nat_rulebase)
+        parse_nat_rules_in_rulebase(
+            normalized_config_adom, normalized_config_global, rulebase_to_parse, normalized_nat_rulebase
+        )
 
         assert normalized_nat_rulebase.rules == {}
         warning_mock.assert_called_once()
@@ -1294,7 +1325,9 @@ class TestParseNatRulebaseLegacy:
             }
         ]
 
-        nat_rules = parse_nat_rulebase(nat_rulebase, "central/dnat_pkg1", normalized_config_adom, normalized_config_global)
+        nat_rules = parse_nat_rulebase(
+            nat_rulebase, "central/dnat_pkg1", normalized_config_adom, normalized_config_global
+        )
 
         assert len(nat_rules) == 2
         assert normalized_config_adom["rules"] == nat_rules
@@ -1312,13 +1345,13 @@ class TestNatRulebaseWiring:
 
     def test_get_native_nat_rulebase_warns_and_returns_empty_when_missing(self, mocker: MockerFixture):
         warning_mock = mocker.patch("fwo_log.FWOLogger.warning")
-        native_config = {"nat_rulebases": []}
+        native_config: dict[str, Any] = {"nat_rulebases": []}
 
         assert fmgr_rule.get_native_nat_rulebase(native_config, "central/dnat_missing") == []
         warning_mock.assert_called_once()
 
     def test_insert_parent_nat_rulebase_creates_and_appends_once(self):
-        normalized_config_adom = {"policies": []}
+        normalized_config_adom: dict[str, Any] = {"policies": []}
         rulebase = fmgr_rule.insert_parent_nat_rulebase(normalized_config_adom, {}, "rb1", "mgm-uid")
 
         assert rulebase.uid == "nat-rulebase-rb1"
@@ -1411,7 +1444,7 @@ class TestNatRulebaseWiring:
 
     def test_normalize_nat_rulebase_skips_section_links(self):
         normalized_config_adom: dict[str, Any] = {}
-        native_config = {"nat_rulebases": []}
+        native_config: dict[str, Any] = {"nat_rulebases": []}
         fmgr_rule.normalize_nat_rulebase(
             {"type": "ordered", "to_rulebase_uid": "rb1", "is_section": True}, native_config, normalized_config_adom, {}
         )
