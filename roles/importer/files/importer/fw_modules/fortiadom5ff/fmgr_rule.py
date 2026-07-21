@@ -1488,7 +1488,7 @@ def insert_nat_rulebase_link(
         link
         for link in gateway["rulebase_links"]
         if link.get("to_rulebase_uid") == to_rulebase_uid
-        and link.get("link_type") == "nat"
+        and link.get("type") == "nat"
         and link.get("from_rulebase_uid") == from_rulebase_uid
     ):
         gateway["rulebase_links"].append(
