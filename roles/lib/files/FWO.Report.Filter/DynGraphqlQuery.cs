@@ -16,6 +16,8 @@ namespace FWO.Report.Filter
         public int parameterCounter { get; set; } = 0;
         public Dictionary<string, object> QueryVariables { get; set; } = [];
         public string FullQuery { get; set; } = "";
+        public string StandardRulesStructureQuery { get; set; } = "";
+        public string StandardRulesPageQuery { get; set; } = "";
         public string RulebaseLinkWhereStatement { get; set; } = "";
         public string NatRulebaseLinkWhereStatement { get; set; } = "";
         public string RuleWhereStatement { get; set; } = "";
@@ -488,6 +490,19 @@ namespace FWO.Report.Filter
                     break;
 
                 case ReportType.Rules:
+                    // The flat firewall_rule query cannot apply the get_rules_for_tenant functions,
+                    // so tenant-filtered reports must use the legacy nested query.
+                    if (filter.ReportParams.TenantFilter.IsActive)
+                    {
+                        query.FullQuery = Queries.Compact(RuleReportQueryBuilder.ConstructLegacyRulesQuery(query, paramString, filter));
+                    }
+                    else
+                    {
+                        query.StandardRulesStructureQuery = Queries.Compact(RuleReportQueryBuilder.ConstructStandardStructureQuery(query, filter));
+                        query.StandardRulesPageQuery = Queries.Compact(RuleReportQueryBuilder.ConstructStandardPageQuery(query, paramString, filter));
+                    }
+                    break;
+
                 case ReportType.ResolvedRules:
                 case ReportType.ResolvedRulesTech:
                 case ReportType.UnusedRules:
@@ -495,7 +510,7 @@ namespace FWO.Report.Filter
                 case ReportType.ComplianceReport:
                 case ReportType.ComplianceDiffReport:
                 case ReportType.RecertEventReport:
-                    query.FullQuery = Queries.Compact(ConstructRulesQuery(query, paramString, filter));
+                    query.FullQuery = Queries.Compact(RuleReportQueryBuilder.ConstructLegacyRulesQuery(query, paramString, filter));
                     break;
 
                 case ReportType.Recertification:
@@ -766,40 +781,6 @@ namespace FWO.Report.Filter
             {
                 query.RelevantManagementIds = deviceFilter.GetSelectedManagements();
             }
-        }
-
-        private static string GetDevWhereFilter(DeviceFilter deviceFilter)
-        {
-            if (deviceFilter == null || deviceFilter.Managements == null)
-            {
-                return devWhereStringStart + devWhereStringEnd;
-            }
-
-            string devWhereStatement = devWhereStringStart;
-            bool first = true;
-
-            devWhereStatement += "_or: [{";
-
-            foreach (ManagementSelect mgmt in deviceFilter.Managements)
-            {
-                if (mgmt.Devices == null) continue;
-
-                foreach (DeviceSelect dev in mgmt.Devices)
-                {
-                    if (dev.Selected)
-                    {
-                        if (!first)
-                        {
-                            devWhereStatement += "}, {";
-                        }
-                        first = false;
-                        devWhereStatement += $@" dev_id: {{_eq:{dev.Id} }} ";
-                    }
-                }
-            }
-            devWhereStatement += "}] ";
-            devWhereStatement += devWhereStringEnd;
-            return devWhereStatement;
         }
 
 
