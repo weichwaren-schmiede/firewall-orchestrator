@@ -156,58 +156,6 @@ namespace FWO.Report.Filter
             //TODO: show number of rulebase links per gateway ?
         }
 
-        private static string ConstructRulesQuery(DynGraphqlQuery query, string paramString, ReportTemplate filter)
-        {
-            return $@"
-                {GetRulesFragmentDef(filter)}
-                query rulesReport ({paramString}) 
-                {{ 
-                    management({mgmtWhereString}) 
-                    {{
-                        id: mgm_id
-                        uid: mgm_uid
-                        name: mgm_name
-                        devices ({GetDevWhereFilter(filter.ReportParams.DeviceFilter)})
-                        {{
-                            id: dev_id
-                            name: dev_name
-                            uid: dev_uid
-                            {query.OpenRuleBaseTable}
-                                where: {{ {query.RulebaseLinkWhereStatement} }}
-                            ) {{
-                                linkType: stm_link_type  {{
-                                    name
-                                    id
-                                }}
-                                link_type
-                                is_initial
-                                is_global
-                                is_section
-                                gw_id
-                                from_rule_id
-                                from_rulebase_id
-                                to_rulebase_id
-                                created
-                                removed
-                            }}
-                        }}
-                        rulebases {{
-                            name
-                            uid
-                            id
-                            {query.OpenRulesTable}
-                                {limitOffsetString}
-                                where: {{ nat_rule: {{_eq: false}} {query.RuleWhereStatement} }} 
-                                order_by: {{ rule_num_numeric: asc }} )
-                            {{
-                                mgm_id: mgm_id
-                                {((ReportType)filter.ReportParams.ReportType == ReportType.UnusedRules ? "rule_metadatum { rule_last_hit }" : "")}
-                                ...{GetRulesFragmentCall(filter)}
-                            }} 
-                        }}
-                    }} 
-                }}";
-        }
 
         private static string GetRulesFragmentDef(ReportTemplate filter)
         {
