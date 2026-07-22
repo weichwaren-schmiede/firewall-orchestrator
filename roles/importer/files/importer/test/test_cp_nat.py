@@ -85,12 +85,12 @@ class TestParseNatRuleTransform:
         assert in_rule["rule-number"] == 0
         assert out_rule["rule-number"] == 0
 
-    def test_missing_time_field_defaults_to_empty_string(self):
+    def test_missing_time_field_defaults_to_none(self):
         nat_rule = _make_nat_rule()
         del nat_rule["time"]
         in_rule, _ = parse_nat_rule_transform(nat_rule)
 
-        assert in_rule["time"] == "time"
+        assert in_rule["time"] is None
 
 
 class TestInsertRulebaseLink:
