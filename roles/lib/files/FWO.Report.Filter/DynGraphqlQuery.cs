@@ -156,25 +156,6 @@ namespace FWO.Report.Filter
             //TODO: show number of rulebase links per gateway ?
         }
 
-
-        private static string GetRulesFragmentDef(ReportTemplate filter)
-        {
-            if ((ReportType)filter.ReportParams.ReportType == ReportType.AppRules)
-            {
-                return RuleQueries.ruleDetailsForAppRuleReportFragments;
-            }
-            return filter.Detailed ? RuleQueries.ruleDetailsForReportFragments : RuleQueries.ruleOverviewFragments;
-        }
-
-        private static string GetRulesFragmentCall(ReportTemplate filter)
-        {
-            if ((ReportType)filter.ReportParams.ReportType == ReportType.AppRules)
-            {
-                return "ruleDetailsForAppRuleReport";
-            }
-            return filter.Detailed ? "ruleDetailsForReport" : "ruleOverview";
-        }
-
         private static string ConstructRecertQuery(DynGraphqlQuery query, string paramString)
         {
             return $@"
