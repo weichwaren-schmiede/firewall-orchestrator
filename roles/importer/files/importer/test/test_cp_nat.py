@@ -1,6 +1,7 @@
 from typing import Any
 
 from fw_modules.checkpointR8x.cp_nat import (
+    filter_nat_rulebases_for_gateway,
     get_initial_nat_rulebase_link,
     insert_parent_nat_rulebase,
     insert_rulebase_link,
@@ -497,7 +498,7 @@ class TestNormalizeNatRules:
         nat_rule = _make_nat_rule("rule-8")
         nat_rule["rule-number"] = 1
         native_config: dict[str, Any] = {
-            "nat_rulebases": [{"nat_rule_chunks": [{"rulebase": [nat_rule]}]}],
+            "nat_rulebases": [{"nat_rule_chunks": [{"rulebase": [nat_rule]}], "policy_uid": "rb-access"}],
             "gateways": [{"uid": "gw-1"}],
             "policies": [],
         }
@@ -516,3 +517,89 @@ class TestNormalizeNatRules:
         assert len(normalized_config["policies"]) == 1
         nat_rulebase = normalized_config["policies"][0]
         assert set(nat_rulebase.rules.keys()) == {"rule-8", "rule-8_translated"}
+
+    def test_does_not_leak_nat_rules_between_gateways_on_different_policies(
+        self, import_state_controller: ImportStateController
+    ):
+        rule_gw1 = _make_nat_rule("rule-gw1")
+        rule_gw1["rule-number"] = 1
+        rule_gw2 = _make_nat_rule("rule-gw2")
+        rule_gw2["rule-number"] = 1
+        native_config: dict[str, Any] = {
+            "nat_rulebases": [
+                {"nat_rule_chunks": [{"rulebase": [rule_gw1]}], "policy_uid": "policy-1"},
+                {"nat_rule_chunks": [{"rulebase": [rule_gw2]}], "policy_uid": "policy-2"},
+            ],
+            "gateways": [{"uid": "gw-1"}, {"uid": "gw-2"}],
+            "policies": [],
+        }
+        normalized_config: dict[str, Any] = {
+            "policies": [],
+            "gateways": [
+                {
+                    "Uid": "gw-1",
+                    "RulebaseLinks": [{"is_initial": True, "link_type": "policy", "to_rulebase_uid": "policy-1"}],
+                },
+                {
+                    "Uid": "gw-2",
+                    "RulebaseLinks": [{"is_initial": True, "link_type": "policy", "to_rulebase_uid": "policy-2"}],
+                },
+            ],
+        }
+
+        normalize_nat_rules(native_config, import_state_controller.state, normalized_config)
+
+        nat_rulebase_gw1 = next(rb for rb in normalized_config["policies"] if rb.uid == "nat-rulebase-gw-1")
+        nat_rulebase_gw2 = next(rb for rb in normalized_config["policies"] if rb.uid == "nat-rulebase-gw-2")
+
+        assert set(nat_rulebase_gw1.rules.keys()) == {"rule-gw1", "rule-gw1_translated"}
+        assert set(nat_rulebase_gw2.rules.keys()) == {"rule-gw2", "rule-gw2_translated"}
+
+
+class TestFilterNatRulebasesForGateway:
+    def _make_normalized_config_with_gateway(
+        self, gateway_uid: str, rulebase_links: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "gateways": [
+                {
+                    "Uid": gateway_uid,
+                    "RulebaseLinks": rulebase_links,
+                }
+            ]
+        }
+
+    def test_only_returns_rulebases_matching_gateway_policy(self):
+        gateway = {"uid": "gw-1"}
+        normalized_config = self._make_normalized_config_with_gateway(
+            "gw-1",
+            [{"is_initial": True, "link_type": "policy", "to_rulebase_uid": "policy-1"}],
+        )
+        native_nat_rulebases: list[dict[str, Any]] = [
+            {"nat_rule_chunks": [], "policy_uid": "policy-1"},
+            {"nat_rule_chunks": [], "policy_uid": "policy-2"},
+        ]
+
+        result = filter_nat_rulebases_for_gateway(gateway, native_nat_rulebases, normalized_config)
+
+        assert result == [{"nat_rule_chunks": [], "policy_uid": "policy-1"}]
+
+    def test_returns_empty_list_when_no_initial_link(self):
+        gateway = {"uid": "gw-1"}
+        normalized_config = self._make_normalized_config_with_gateway("gw-1", [])
+        native_nat_rulebases: list[dict[str, Any]] = [{"nat_rule_chunks": [], "policy_uid": "policy-1"}]
+
+        result = filter_nat_rulebases_for_gateway(gateway, native_nat_rulebases, normalized_config)
+
+        assert result == []
+
+    def test_returns_empty_list_when_gateway_not_found(self):
+        gateway = {"uid": "unknown-gw"}
+        normalized_config = self._make_normalized_config_with_gateway(
+            "gw-1", [{"is_initial": True, "link_type": "policy", "to_rulebase_uid": "policy-1"}]
+        )
+        native_nat_rulebases: list[dict[str, Any]] = [{"nat_rule_chunks": [], "policy_uid": "policy-1"}]
+
+        result = filter_nat_rulebases_for_gateway(gateway, native_nat_rulebases, normalized_config)
+
+        assert result == []

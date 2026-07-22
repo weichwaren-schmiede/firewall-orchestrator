@@ -598,9 +598,10 @@ def handle_nat_rules(native_config_domain: dict[str, Any], sid: str, import_stat
         native_config_domain=native_config_domain,
     )
     if nat_rules:
+        nat_rules["policy_uid"] = policy["uid"]
         native_config_domain["nat_rulebases"].append(nat_rules)
     else:
-        native_config_domain["nat_rulebases"].append({"nat_rule_chunks": []})
+        native_config_domain["nat_rulebases"].append({"nat_rule_chunks": [], "policy_uid": policy["uid"]})
 
 
 def add_ordered_layers_to_native_config(

@@ -16,7 +16,31 @@ def normalize_nat_rules(
         return
 
     for gateway in native_config["gateways"]:
-        parse_native_nat_rulebases(gateway, native_nat_rulebases, import_state, normalized_config, native_config)
+        gateway_nat_rulebases = filter_nat_rulebases_for_gateway(gateway, native_nat_rulebases, normalized_config)
+        parse_native_nat_rulebases(gateway, gateway_nat_rulebases, import_state, normalized_config, native_config)
+
+
+def filter_nat_rulebases_for_gateway(
+    gateway: dict[str, Any],
+    native_nat_rulebases: list[dict[str, Any]],
+    normalized_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    A Check Point management can host multiple gateways/policies, so native_nat_rulebases
+    may contain NAT rulebases collected for other gateways' policies. Only keep the ones
+    belonging to this gateway's own policy.
+    """
+    initial_gateway_link = get_initial_nat_rulebase_link(gateway, normalized_config)
+    if initial_gateway_link is None:
+        return []
+
+    gateway_policy_uid = initial_gateway_link.get("to_rulebase_uid")
+    if not gateway_policy_uid:
+        return []
+
+    return [
+        nat_rulebase for nat_rulebase in native_nat_rulebases if nat_rulebase.get("policy_uid") == gateway_policy_uid
+    ]
 
 
 def get_initial_nat_rulebase_link(gateway: dict[str, Any], normalized_config: dict[str, Any]) -> dict[str, Any] | None:
