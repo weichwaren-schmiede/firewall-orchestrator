@@ -735,7 +735,7 @@ namespace FWO.Report.Filter
                         query.RulebaseLinkWhereStatement +=
                             $"created: {{_lte: $import_id_end }}" +
                             removedStatement +
-                            $" stm_link_type: {{id: {{_neq: 6}}}}"; // Filter out NAT rulebase links
+                            $" _or: [{{link_type: {{_is_null: true}}}}, {{link_type: {{_neq: 6}}}}]"; // Filter out NAT rulebase links
                         query.NatRulebaseLinkWhereStatement +=
                             $"created: {{_lte: $import_id_end }}" +
                             $"_or: [{{is_initial: {{_eq: true}}, {removedStatement}}}, {{link_type: {{_eq: 6}}, {removedStatement}}}]";
