@@ -166,7 +166,7 @@ namespace FWO.Report.Filter
             return filter.Detailed ? "ruleDetailsForReport" : "ruleOverview";
         }
 
-        private static string GetDeviceWhereFilter(DeviceFilter deviceFilter)
+        public static string GetDeviceWhereFilter(DeviceFilter deviceFilter)
         {
             if (deviceFilter == null || deviceFilter.Managements == null)
             {

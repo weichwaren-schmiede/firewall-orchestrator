@@ -331,7 +331,7 @@ namespace FWO.Report.Filter
                         id: mgm_id
                         uid: mgm_uid
                         name: mgm_name
-                        devices ({GetDevWhereFilter(filter.ReportParams.DeviceFilter)})
+                        devices ({RuleReportQueryBuilder.GetDeviceWhereFilter(filter.ReportParams.DeviceFilter)})
                         {{
                             id: dev_id
                             name: dev_name
@@ -710,40 +710,6 @@ namespace FWO.Report.Filter
             {
                 query.RelevantManagementIds = deviceFilter.GetSelectedManagements();
             }
-        }
-
-        private static string GetDevWhereFilter(DeviceFilter deviceFilter)
-        {
-            if (deviceFilter == null || deviceFilter.Managements == null)
-            {
-                return devWhereStringStart + devWhereStringEnd;
-            }
-
-            string devWhereStatement = devWhereStringStart;
-            bool first = true;
-
-            devWhereStatement += "_or: [{";
-
-            foreach (ManagementSelect mgmt in deviceFilter.Managements)
-            {
-                if (mgmt.Devices == null) continue;
-
-                foreach (DeviceSelect dev in mgmt.Devices)
-                {
-                    if (dev.Selected)
-                    {
-                        if (!first)
-                        {
-                            devWhereStatement += "}, {";
-                        }
-                        first = false;
-                        devWhereStatement += $@" dev_id: {{_eq:{dev.Id} }} ";
-                    }
-                }
-            }
-            devWhereStatement += "}] ";
-            devWhereStatement += devWhereStringEnd;
-            return devWhereStatement;
         }
 
         private static void SetTimeFilter(ref DynGraphqlQuery query, TimeFilter? timeFilter, ReportType? reportType, RecertFilter recertFilter)
