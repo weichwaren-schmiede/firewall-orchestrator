@@ -34,8 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from models.import_state import ImportState
-
-    from importer.services.uid2id_mapper import Uid2IdMapper
+    from services.uid2id_mapper import Uid2IdMapper
 
 
 class LogLock:
