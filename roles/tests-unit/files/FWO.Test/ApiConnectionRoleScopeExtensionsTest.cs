@@ -69,6 +69,38 @@ namespace FWO.Test
         }
 
         [Test]
+        public void SetBestRoleForReportExcludesDeniedRoles()
+        {
+            TrackingApiConnection connection = new();
+            ClaimsPrincipal user = CreateUser(Roles.Admin, Roles.FwAdmin, Roles.ReporterViewAll, Roles.Reporter, Roles.Recertifier, Roles.Auditor);
+
+            connection.SetBestRoleForReport(user, ReportType.Rules, [Roles.Admin, Roles.FwAdmin]);
+
+            Assert.That(connection.LastTargetRoles, Is.EqualTo(new List<string>
+            {
+                Roles.ReporterViewAll, Roles.Reporter, Roles.Recertifier, Roles.Auditor
+            }));
+        }
+
+        [Test]
+        public async Task RunWithBestRoleForReport_FallsBackWhenPreferredRoleExcluded()
+        {
+            TrackingApiConnection connection = new();
+            ClaimsPrincipal user = CreateUser(Roles.Modeller, Roles.Recertifier);
+
+            await connection.RunWithBestRoleForReport(user, ReportType.AppRules, async () =>
+            {
+                Assert.That(connection.ActiveRole, Is.EqualTo(Roles.Recertifier));
+                await Task.CompletedTask;
+                return true;
+            }, [Roles.Modeller]);
+
+            Assert.That(connection.LastTargetRoles, Is.EqualTo(new List<string> { Roles.Admin, Roles.Recertifier, Roles.Auditor }));
+            Assert.That(connection.ActiveRole, Is.Empty);
+            Assert.That(connection.SwitchBackCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public async Task RunWithBestRoleForReportUsesAppRulesRoleAndSwitchesBack()
         {
             TrackingApiConnection connection = new();

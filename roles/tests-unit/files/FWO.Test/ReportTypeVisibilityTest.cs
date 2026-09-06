@@ -98,6 +98,69 @@ namespace FWO.Test
             Assert.That(reportTypes, Does.Not.Contain(ReportType.RecertificationEvent));
         }
 
+        [Test]
+        public void CanUseReportType_ExplicitNotVisibleHidesOtherwiseVisibleReportType()
+        {
+            UserConfig userConfig = BuildUserConfig(Roles.Modeller);
+            userConfig.ReportTypeVisibilityByRole = ReportTypeRoleVisibilityConfig.Serialize(new()
+            {
+                [Roles.Modeller] = new() { [ReportType.Connections] = ReportTypeVisibilityOption.NotVisible }
+            });
+
+            Assert.That(userConfig.CanUseReportType(ReportType.Connections), Is.False);
+        }
+
+        [Test]
+        public void CanUseReportType_ExplicitVisibleShowsOtherwiseHiddenReportType()
+        {
+            UserConfig userConfig = BuildUserConfig(Roles.Modeller);
+            userConfig.ReportTypeVisibilityByRole = ReportTypeRoleVisibilityConfig.Serialize(new()
+            {
+                [Roles.Modeller] = new() { [ReportType.Rules] = ReportTypeVisibilityOption.Visible }
+            });
+
+            Assert.That(userConfig.CanUseReportType(ReportType.Rules), Is.True);
+        }
+
+        [Test]
+        public void CanUseReportType_ExplicitVisibleStillHonoursModellingOwnerScoping()
+        {
+            UserConfig userConfig = BuildUserConfig(Roles.Modeller);
+            userConfig.ReportTypeVisibilityByRole = ReportTypeRoleVisibilityConfig.Serialize(new()
+            {
+                [Roles.Modeller] = new() { [ReportType.Connections] = ReportTypeVisibilityOption.Visible }
+            });
+
+            Assert.That(userConfig.CanUseReportType(ReportType.Connections, modellingOwnerAllowed: false), Is.False);
+            Assert.That(userConfig.CanUseReportType(ReportType.Connections, modellingOwnerAllowed: true), Is.True);
+        }
+
+        [Test]
+        public void CanUseReportType_InheritedMatchesStandardCategoryRules()
+        {
+            UserConfig userConfig = BuildUserConfig(Roles.Modeller);
+            userConfig.ReportTypeVisibilityByRole = ReportTypeRoleVisibilityConfig.Serialize(new()
+            {
+                [Roles.Modeller] = new() { [ReportType.Rules] = ReportTypeVisibilityOption.Inherited }
+            });
+
+            Assert.That(userConfig.CanUseReportType(ReportType.Rules), Is.False);
+            Assert.That(userConfig.CanUseReportType(ReportType.Connections), Is.True);
+        }
+
+        [Test]
+        public void GetExplicitlyDeniedRoles_ReturnsOnlyRolesSetToNotVisible()
+        {
+            UserConfig userConfig = BuildUserConfig(Roles.Modeller, Roles.Recertifier);
+            userConfig.ReportTypeVisibilityByRole = ReportTypeRoleVisibilityConfig.Serialize(new()
+            {
+                [Roles.Modeller] = new() { [ReportType.Rules] = ReportTypeVisibilityOption.NotVisible },
+                [Roles.Recertifier] = new() { [ReportType.Rules] = ReportTypeVisibilityOption.Visible }
+            });
+
+            Assert.That(userConfig.GetExplicitlyDeniedRoles(ReportType.Rules), Is.EqualTo(new List<string> { Roles.Modeller }));
+        }
+
         private static UserConfig BuildUserConfig(params string[] roles)
         {
             UserConfig userConfig = new();
