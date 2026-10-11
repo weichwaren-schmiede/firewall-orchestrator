@@ -1,17 +1,16 @@
-@using FWO.DeviceAutoDiscovery
-@using FWO.Data.Logging
-@using FWO.Middleware.Client
-@using System.Text.Json.Serialization
-@using Newtonsoft.Json
 @using System.Security.Authentication
+@using FWO.Data.Logging
+@using FWO.DeviceAutoDiscovery
+@using FWO.Middleware.Client
 @using FWO.Services.Logging
 
 
 @page "/settings/managements"
-@attribute [Authorize(Roles = $"{Roles.Admin}, {Roles.Auditor}, {Roles.FwAdmin}")]
+@attribute [Authorize(Roles = $"{Roles.Admin}, {Roles.Auditor}")]
 
 @inject ApiConnection apiConnection
 @inject UserConfig userConfig
+@inject TokenService tokenService
 
 <div class="input-group">
     <h3>@(userConfig.GetText("managements"))</h3>
@@ -39,7 +38,7 @@
                 <div class="btn-group">
                     <button type="button" class="btn btn-sm btn-success" @onclick="() => Clone(context)">@(userConfig.GetText("clone"))</button>
                     <button type="button" class="btn btn-sm btn-warning" @onclick="() => Edit(context)">@(userConfig.GetText("edit"))</button>
-                    <ExecutionModeAuthorizeView Roles="@($"{Roles.Admin}, {Roles.Auditor}, {Roles.FwAdmin}")" Context="ctx">
+                    <ExecutionModeAuthorizeView Roles="@($"{Roles.Admin}, {Roles.Auditor}")" Context="ctx">
                         <Authorized Context="authState">
                             <button type="button" class="btn btn-sm btn-danger" @onclick="() => RequestDelete(context)">@(userConfig.GetText("delete"))</button>
                             @if (context.DeviceType.CanBeSupermanager() || context.DeviceType.CanBeAutodiscovered(context))
@@ -71,7 +70,7 @@
                 }
             </Template>
         </Column>
-        <Column TableItem="Management" Title="@(userConfig.GetText("import_credential"))" Field="@(x => x.ImportCredential.Id)" Sortable="true">
+        <Column TableItem="Management" Title="@(userConfig.GetText("readonly_credential_mgm"))" Field="@(x => x.ImportCredential.Id)" Sortable="true">
             <Template>
                 @if (!context.DeviceType.IsDummyRouter())
                 {
@@ -173,9 +172,19 @@
                         </div>
                     }
                     <div class="form-group row mt-2" data-toggle="tooltip" title="@(userConfig.PureLine("H5116"))">
-                        <label class="col-sm-3 col-form-label col-form-label-sm">@(userConfig.GetText("import_credential"))*:</label>
+                        <label class="col-sm-3 col-form-label col-form-label-sm">@(userConfig.GetText("readonly_credential_mgm"))*:</label>
                         <div class="col-sm-8">
                             <Dropdown ElementType="ImportCredential" ElementToString="@(c => c.Name)" @bind-SelectedElement="actManagement.ImportCredential" Elements="credentials">
+                                <ElementTemplate Context="cred">
+                                    @cred.Name
+                                </ElementTemplate>
+                            </Dropdown>
+                        </div>
+                    </div>
+                    <div class="form-group row mt-2" data-toggle="tooltip" title="@(userConfig.PureLine("H5117"))">
+                        <label class="col-sm-3 col-form-label col-form-label-sm">@(userConfig.GetText("write_credential")):</label>
+                        <div class="col-sm-8">
+                            <Dropdown ElementType="ImportCredential" ElementToString="@(c => c.Name)" @bind-SelectedElement="actManagement.ExportCredential" Elements="credentials" Nullable="true" NoneSelectedText="">
                                 <ElementTemplate Context="cred">
                                     @cred.Name
                                 </ElementTemplate>
@@ -249,7 +258,7 @@
     </Body>
     <Footer>
         <div class="btn-group">
-            <ExecutionModeAuthorizeView Roles="@($"{Roles.Admin}, {Roles.FwAdmin}")">
+            <ExecutionModeAuthorizeView Roles="@($"{Roles.Admin}")">
                 <Authorized>
                     <button type="button" class="btn btn-sm btn-primary" @onclick="Save">@(userConfig.GetText("save"))</button>
                 </Authorized>
@@ -276,9 +285,7 @@
     private List<ActionItem> actActions = [];
     private List<Management> managements = [];
     private List<Management> sampleManagements = [];
-    private List<Management> discoveredManagements = [];
     private List<DeviceType> deviceTypes = [];
-    private List<Device> devices = [];
     private List<ImportCredential> credentials = [];
 
     private ITable<Management>? table;
@@ -305,16 +312,30 @@
     protected override async Task OnInitializedAsync()
     {
         await Refresh();
+
+        await base.OnInitializedAsync();
     }
 
     protected async Task Refresh()
     {
         try
         {
-            JwtReader jwt = new (userConfig.User.Jwt);
-            await jwt.Validate();
+            string? accessToken = await tokenService.GetAccessToken();
 
-            if (jwt.ContainsAllowedRole(Roles.Admin) || jwt.ContainsAllowedRole(Roles.FwAdmin))
+            if (string.IsNullOrWhiteSpace(accessToken))
+            {
+                throw new AuthenticationException("not_authorized");
+            }
+
+            JwtReader jwt = new(accessToken);
+            JwtValidationResult validationResult = await jwt.ValidateToken();
+
+            if (!validationResult.IsSuccess)
+            {
+                throw new AuthenticationException("not_authorized");
+            }
+
+            if (jwt.ContainsAllowedRole(Roles.Admin))
             {
                 managements = await apiConnection.SendQueryAsync<List<Management>>(DeviceQueries.getManagementsDetails);
             }
@@ -327,7 +348,7 @@
 
             deviceTypes = await apiConnection.SendQueryAsync<List<DeviceType>>(DeviceQueries.getDeviceTypeDetails);
 
-            if (jwt.ContainsAllowedRole(Roles.Admin) || jwt.ContainsAllowedRole(Roles.FwAdmin))
+            if (jwt.ContainsAllowedRole(Roles.Admin))
             {
                 credentials = await apiConnection.SendQueryAsync<List<ImportCredential>>(DeviceQueries.getCredentials);
             }
@@ -475,6 +496,9 @@
                 devTypeId = actManagement.DeviceType.Id,
                 hostname = actManagement.Hostname,
                 importCredentialId = actManagement.ImportCredential.Id,
+                exportCredentialId = actManagement.ExportCredential?.Id > 0
+                    ? actManagement.ExportCredential.Id
+                    : (int?)null,
                 port = actManagement.Port,
                 importDisabled = actManagement.ImportDisabled,
                 forceInitialImport = actManagement.ForceInitialImport,
@@ -519,6 +543,9 @@
                 devTypeId = actManagement.DeviceType.Id,
                 hostname = actManagement.Hostname,
                 importCredentialId = actManagement.ImportCredential.Id,
+                exportCredentialId = actManagement.ExportCredential?.Id > 0
+                    ? actManagement.ExportCredential.Id
+                    : (int?)null,
                 port = actManagement.Port,
                 importDisabled = actManagement.ImportDisabled,
                 forceInitialImport = actManagement.ForceInitialImport,
@@ -606,7 +633,7 @@
         {
             workInProgress = true;
             StateHasChanged();
-            AutoDiscoveryBase actAutodiscovery = new AutoDiscoveryBase(superManagement, apiConnection);
+            AutoDiscoveryBase actAutodiscovery = new AutoDiscoveryBase(superManagement, apiConnection, userConfig.ImportCheckCertificates);
             actActions = actAutodiscovery.ConvertToActions(await actAutodiscovery.Run());
             int ChangeCounter = actActions.Count();
             await AddAutoDiscoverLogEntry(0, userConfig.GetText("manual_autodiscovery"), (ChangeCounter > 0 ? ChangeCounter + userConfig.GetText("changes_found") : userConfig.GetText("found_no_changes")), superManagement.Id);
@@ -654,4 +681,3 @@
         }
     }
 }
-

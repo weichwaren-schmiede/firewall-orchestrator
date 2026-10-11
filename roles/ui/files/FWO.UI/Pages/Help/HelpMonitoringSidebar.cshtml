@@ -9,6 +9,11 @@
         <div class="sidebar-help" style="width:250px; overflow-x:scroll;">
             <ul class="me-auto">
                 <p></p>
+                <h5>@(userConfig.GetText("system"))</h5>
+                <a class="nav-link" href="/help/monitoring/system_usage/?lang=@($"{userConfig.GetUserLanguage()}")">
+                    <span class="@Icons.Monitoring"></span> @(userConfig.GetText("system_usage"))
+                </a>
+                <p></p>
                 <h5>@(userConfig.GetText("alerts"))</h5>
                 <a class="nav-link" href="/help/monitoring/open_alerts/?lang=@($"{userConfig.GetUserLanguage()}")">
                     <span class="@Icons.Alarm"></span> @(userConfig.GetText("open_alerts"))
@@ -23,6 +28,9 @@
                 </a>
                 <a class="nav-link" href="/help/monitoring/daily_checks/?lang=@($"{userConfig.GetUserLanguage()}")">
                     <span class="@Icons.Check"></span> @(userConfig.GetText("daily_checks"))
+                </a>
+                <a class="nav-link" href="/help/monitoring/rule_owner_mapping/?lang=@($"{userConfig.GetUserLanguage()}")">
+                    <span class="@Icons.Owner"></span> @(userConfig.GetText("rule_owner_mapping_runs"))
                 </a>
                 <p></p>
                 <h5>@(userConfig.GetText("import"))</h5>
@@ -50,6 +58,16 @@
                 </a>
                 <a class="nav-link" href="/help/monitoring/external_requests/?lang=@($"{userConfig.GetUserLanguage()}")">
                     <span class="@Icons.Export"></span> @(userConfig.GetText("external_requests"))
+                </a>
+                <p></p>
+                <h5>@(userConfig.GetText("workflow"))</h5>
+                <a class="nav-link" href="/help/monitoring/workflow/?lang=@($"{userConfig.GetUserLanguage()}")">
+                    <span class="@Icons.Workflow"></span> @(userConfig.GetText("tickets"))
+                </a>
+                <p></p>
+                <h5>@(userConfig.GetText("notifications"))</h5>
+                <a class="nav-link" href="/help/monitoring/email_log/?lang=@($"{userConfig.GetUserLanguage()}")">
+                    <span class="@Icons.Email"></span> @(userConfig.GetText("email_log"))
                 </a>
                 <p></p>
                 <h5>@(userConfig.GetText("personal"))</h5>

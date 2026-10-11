@@ -19,10 +19,7 @@ namespace FWO.Data.Networking
         /// </summary>
         public List<NetworkObjectRangeAnalysis> AnalyzeMany(IEnumerable<NetworkObject> objects)
         {
-            return objects
-                .Where(obj => obj.Type.Name != ObjectType.Group)
-                .Select(Analyze)
-                .ToList();
+            return AnalyzeLazy(objects).ToList();
         }
 
         /// <summary>
@@ -60,33 +57,54 @@ namespace FWO.Data.Networking
         }
 
         /// <summary>
-        /// Checks whether any object contains the given IPv4 address while still meeting the minimum prefix length.
+        /// Evaluates whether the supported IPv4 objects comply with the minimum prefix length and contain the given address.
+        /// A prefix violation takes precedence over an address match. Unsupported objects are ignored.
         /// </summary>
-        public bool MatchesIpFilter(IPAddress ipAddress, int minPrefix, IEnumerable<NetworkObject> objects)
+        public IpFilterEvaluation EvaluateIpFilter(IPAddress ipAddress, int minPrefix,
+            IEnumerable<NetworkObject> objects)
         {
-            foreach (NetworkObjectRangeAnalysis analysis in AnalyzeMany(objects))
+            return EvaluateField(ipAddress, minPrefix, objects);
+        }
+
+        /// <summary>
+        /// Checks whether every supported IPv4 object meets the supplied minimum prefix length.
+        /// </summary>
+        public bool MeetsMinimumPrefix(int minPrefix, IEnumerable<NetworkObject> objects)
+        {
+            return EvaluateField(null, minPrefix, objects) != IpFilterEvaluation.PrefixViolation;
+        }
+
+        private IpFilterEvaluation EvaluateField(IPAddress? ipAddress, int minPrefix,
+            IEnumerable<NetworkObject> objects)
+        {
+            bool containsIp = false;
+
+            foreach (NetworkObjectRangeAnalysis analysis in AnalyzeLazy(objects))
             {
-                if (!analysis.IsSupported || analysis.PrefixLength < minPrefix)
+                if (!analysis.IsSupported)
                 {
                     continue;
                 }
 
-                if (IsIpInRange(ipAddress, analysis.Start, analysis.End))
+                if (analysis.PrefixLength < minPrefix)
                 {
-                    return true;
+                    return IpFilterEvaluation.PrefixViolation;
+                }
+
+                if (ipAddress is not null && IsIpInRange(ipAddress, analysis.Start, analysis.End))
+                {
+                    containsIp = true;
                 }
             }
 
-            return false;
+            return containsIp ? IpFilterEvaluation.Match : IpFilterEvaluation.NoIpMatch;
         }
 
-        /// <summary>
-        /// Checks whether any supported IPv4 object is broader than the supplied minimum prefix length.
-        /// </summary>
-        public bool ExceedsPrefixThreshold(int minPrefix, IEnumerable<NetworkObject> objects)
+        private IEnumerable<NetworkObjectRangeAnalysis> AnalyzeLazy(IEnumerable<NetworkObject> objects)
         {
-            return AnalyzeMany(objects)
-                .Any(analysis => analysis.IsSupported && analysis.PrefixLength < minPrefix);
+            return objects
+                .Where(obj => obj.Type.Name != ObjectType.Group)
+                .Select(Analyze);
         }
 
         private IPAddress? ParseAndCache(string? ipString)
@@ -161,6 +179,27 @@ namespace FWO.Data.Networking
 
             return diff == 0 ? 32 : BitOperations.LeadingZeroCount(diff);
         }
+    }
+
+    /// <summary>
+    /// Describes the result of applying an IP and minimum-prefix filter to one rule field.
+    /// </summary>
+    public enum IpFilterEvaluation
+    {
+        /// <summary>
+        /// All supported objects meet the prefix requirement, but none contains the requested IP address.
+        /// </summary>
+        NoIpMatch,
+
+        /// <summary>
+        /// All supported objects meet the prefix requirement and at least one contains the requested IP address.
+        /// </summary>
+        Match,
+
+        /// <summary>
+        /// At least one supported object is broader than the minimum prefix length.
+        /// </summary>
+        PrefixViolation
     }
 
     /// <summary>

@@ -45,11 +45,11 @@ namespace FWO.Data
         [JsonProperty("ldap_connection"), JsonPropertyName("ldap_connection")]
         public UiLdapConnection LdapConnection { get; set; } = new();
 
-        public string Jwt { get; set; } = "";
         public List<string> Roles { get; set; } = [];
         public List<string> Groups { get; set; } = [];
         public List<int> Ownerships { get; set; } = [];
         public List<int> RecertOwnerships { get; set; } = [];
+        public List<int> WorkflowVisibilityGroupIds { get; set; } = [];
 
 
         public UiUser()
@@ -76,6 +76,7 @@ namespace FWO.Data
             Roles = user.Roles;
             Ownerships = user.Ownerships;
             RecertOwnerships = user.RecertOwnerships;
+            WorkflowVisibilityGroupIds = user.WorkflowVisibilityGroupIds;
             if (user.LdapConnection != null)
             {
                 LdapConnection = new UiLdapConnection(user.LdapConnection);
@@ -104,6 +105,17 @@ namespace FWO.Data
         public bool IsInternal()
         {
             return new DistName(Dn).IsInternal();
+        }
+
+        /// <summary>
+        /// Checks whether both users are the same directory account. A dn is unique only inside its
+        /// LDAP connection, the same dn in another connection is a different user (SEC-11).
+        /// </summary>
+        /// <param name="otherUser">User to compare with.</param>
+        /// <returns>True if both users belong to the same LDAP connection and have equivalent dns.</returns>
+        public bool IsSameDirectoryAccount(UiUser otherUser)
+        {
+            return LdapConnection?.Id == otherUser.LdapConnection?.Id && DistName.DnEquals(Dn, otherUser.Dn);
         }
 
         public bool Sanitize()

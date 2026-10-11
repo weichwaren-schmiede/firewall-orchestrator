@@ -2,8 +2,7 @@
 
 This catalogue lists the features of Firewall Orchestrator grouped by functional
 area, together with the version in which they were first introduced. It is
-compiled from the revision histories
-([main](revision-history-main.md), [develop](revision-history-develop.md)).
+compiled from the [revision history](revision-history.md).
 
 Where a feature was first introduced on the `develop` branch and later shipped in
 a `main` release, the released (main) version is given as the introduction
@@ -108,6 +107,8 @@ For a chronological, version-by-version listing (8.0 onwards) see
 
 | Feature | Introduced in |
 | --- | --- |
+| Rules report management rulebases view (start rulebase selection, including rulebases without gateway) | 9.6.1 |
+| Configurable global and personal default rules report view (gateway rules or management rulebases) | 9.6.1 |
 | Report scheduling | 5.0.1 |
 | Default report templates | 5.1.04 |
 | First compliance report template | 5.1.05 |
@@ -128,6 +129,7 @@ For a chronological, version-by-version listing (8.0 onwards) see
 | Feature | Introduced in |
 | --- | --- |
 | Compliance matrix module | 7.0 (6.5.0) |
+| Optional filter for newly non-compliant rules in compliance diff reports | 9.4.5 |
 
 ## Tenant management
 

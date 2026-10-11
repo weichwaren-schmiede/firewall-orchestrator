@@ -5,8 +5,11 @@ using FWO.Test.Mocks;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Net;
 using System.Text;
 using FWO.Middleware.Client;
+using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 
 namespace FWO.Test
 {
@@ -119,6 +122,44 @@ namespace FWO.Test
             Assert.That(result1, Is.EqualTo(result2));
             Assert.That(result2, Is.EqualTo(result3));
             Assert.That(result1, Is.EqualTo(TEST_ACCESS_TOKEN));
+        }
+
+        [Test]
+        public async Task GetAccessTokenAsync_WhenStoredTokenPairCannotBeRead_ShouldCompleteAndClearStorage()
+        {
+            // Arrange
+            ThrowingProtectedSessionStorage throwingSessionStorage = new(new CryptographicException("bad payload"));
+            TokenService brokenTokenService = new(mockMiddlewareClient!, throwingSessionStorage);
+
+            // Act
+            Task<string?> tokenTask = brokenTokenService.GetAccessToken();
+            Task completedTask = await Task.WhenAny(tokenTask, Task.Delay(TimeSpan.FromSeconds(2)));
+
+            // Assert
+            Assert.That(completedTask, Is.SameAs(tokenTask), "GetAccessToken should not hang when stored session data is unreadable.");
+            Assert.That(await tokenTask, Is.Null);
+            Assert.That(throwingSessionStorage.DeleteCallCount, Is.EqualTo(1));
+            Assert.That(throwingSessionStorage.ContainsKey("token_pair"), Is.False);
+        }
+
+        [Test]
+        public async Task GetAccessTokenAsync_WhenFirstStorageReadFailsTransiently_ShouldRetryOnNextCall()
+        {
+            // Arrange
+            FlakyProtectedSessionStorage flakySessionStorage = new();
+            TokenService retryingTokenService = new(mockMiddlewareClient!, flakySessionStorage);
+
+            // Act
+            string? firstAttempt = await retryingTokenService.GetAccessToken();
+            string? secondAttempt = await retryingTokenService.GetAccessToken();
+
+            // Assert
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstAttempt, Is.Null);
+                Assert.That(secondAttempt, Is.EqualTo(TEST_ACCESS_TOKEN));
+                Assert.That(flakySessionStorage.GetCallCount, Is.EqualTo(2));
+            });
         }
 
         #endregion
@@ -476,6 +517,103 @@ namespace FWO.Test
             Assert.That(mockMiddlewareClient.RefreshTokenCallCount, Is.LessThanOrEqualTo(1));
         }
 
+
+        /// <summary>
+        /// A 5xx says the middleware could not carry the refresh out - the 503 it answers
+        /// when the API is unreachable. That is no verdict on the refresh token, so the
+        /// outcome has to tell the caller to keep the stored pair.
+        /// </summary>
+        [Test]
+        public async Task TryRefreshTokenPair_WhenTheApiCannotBeReached_ShouldReportRetryable()
+        {
+            await tokenService!.SetTokenPair(CreateExpiredTokenPair());
+            mockMiddlewareClient!.ShouldRefreshSucceed = false;
+            mockMiddlewareClient.RefreshFailureStatusCode = HttpStatusCode.ServiceUnavailable;
+
+            TokenRefreshResult result = await tokenService.TryRefreshTokenPair();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Tokens, Is.Null);
+                Assert.That(result.Retryable, Is.True, "a 503 must not be read as a rejection of the refresh token");
+            });
+        }
+
+        /// <summary>
+        /// The other half of the same decision: a 401 is the middleware's verdict on this
+        /// token and does settle the session, so it must not be reported as retryable.
+        /// </summary>
+        [Test]
+        public async Task TryRefreshTokenPair_WhenTheRefreshTokenIsRejected_ShouldNotReportRetryable()
+        {
+            await tokenService!.SetTokenPair(CreateExpiredTokenPair());
+            mockMiddlewareClient!.ShouldRefreshSucceed = false;
+            mockMiddlewareClient.RefreshFailureStatusCode = HttpStatusCode.Unauthorized;
+
+            TokenRefreshResult result = await tokenService.TryRefreshTokenPair();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Tokens, Is.Null);
+                Assert.That(result.Retryable, Is.False);
+            });
+        }
+
+        /// <summary>
+        /// No HTTP answer arrived at all, so nothing was learned about the token either.
+        /// </summary>
+        [Test]
+        public async Task TryRefreshTokenPair_WhenTheCallDoesNotComplete_ShouldReportRetryable()
+        {
+            await tokenService!.SetTokenPair(CreateExpiredTokenPair());
+            mockMiddlewareClient!.ShouldRefreshSucceed = false;
+            mockMiddlewareClient.SimulateRefreshTransportFailure = true;
+
+            TokenRefreshResult result = await tokenService.TryRefreshTokenPair();
+
+            Assert.That(result.Retryable, Is.True);
+        }
+
+        /// <summary>
+        /// A successful refresh is not retryable, because there is nothing to retry.
+        /// </summary>
+        [Test]
+        public async Task TryRefreshTokenPair_WhenRefreshSucceeds_ShouldReturnThePairAndNotBeRetryable()
+        {
+            await tokenService!.SetTokenPair(CreateExpiredTokenPair());
+            mockMiddlewareClient!.ShouldRefreshSucceed = true;
+            mockMiddlewareClient.NextRefreshTokenResponse = new TokenPair
+            {
+                AccessToken = GenerateJwtToken(DateTime.UtcNow.AddHours(1)),
+                RefreshToken = "new-refresh-token",
+                AccessTokenExpires = DateTime.UtcNow.AddHours(1),
+                RefreshTokenExpires = DateTime.UtcNow.AddDays(7)
+            };
+
+            TokenRefreshResult result = await tokenService.TryRefreshTokenPair();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Tokens, Is.Not.Null);
+                Assert.That(result.Retryable, Is.False);
+            });
+        }
+
+        /// <summary>
+        /// Builds a token pair whose access token has already expired, so a refresh is due.
+        /// </summary>
+        /// <returns>An expired pair carrying a usable refresh token.</returns>
+        private static TokenPair CreateExpiredTokenPair()
+        {
+            return new TokenPair
+            {
+                AccessToken = GenerateJwtToken(DateTime.UtcNow.AddHours(-1)),
+                RefreshToken = TEST_REFRESH_TOKEN,
+                AccessTokenExpires = DateTime.UtcNow.AddHours(-1),
+                RefreshTokenExpires = DateTime.UtcNow.AddDays(7)
+            };
+        }
+
         #endregion
 
         #region RevokeTokens Tests
@@ -659,6 +797,93 @@ namespace FWO.Test
             );
 
             return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        private sealed class ThrowingProtectedSessionStorage : ISessionStorage
+        {
+            private readonly Exception exceptionToThrow;
+            private readonly Dictionary<string, object?> storage = new();
+
+            public int DeleteCallCount { get; private set; }
+
+            public ThrowingProtectedSessionStorage(Exception exceptionToThrow)
+            {
+                this.exceptionToThrow = exceptionToThrow;
+                storage["token_pair"] = new TokenPair
+                {
+                    AccessToken = TEST_ACCESS_TOKEN,
+                    RefreshToken = TEST_REFRESH_TOKEN,
+                    AccessTokenExpires = DateTime.UtcNow.AddHours(1),
+                    RefreshTokenExpires = DateTime.UtcNow.AddDays(7)
+                };
+            }
+
+            public Task<ProtectedBrowserStorageResult<TValue>> GetAsync<TValue>(string key)
+            {
+                throw exceptionToThrow;
+            }
+
+            public Task SetAsync(string key, object value)
+            {
+                storage[key] = value;
+                return Task.CompletedTask;
+            }
+
+            public Task DeleteAsync(string key)
+            {
+                DeleteCallCount++;
+                storage.Remove(key);
+                return Task.CompletedTask;
+            }
+
+            public bool ContainsKey(string key)
+            {
+                return storage.ContainsKey(key);
+            }
+        }
+
+        private sealed class FlakyProtectedSessionStorage : ISessionStorage
+        {
+            private readonly TokenPair storedTokenPair = new()
+            {
+                AccessToken = TEST_ACCESS_TOKEN,
+                RefreshToken = TEST_REFRESH_TOKEN,
+                AccessTokenExpires = DateTime.UtcNow.AddHours(1),
+                RefreshTokenExpires = DateTime.UtcNow.AddDays(7)
+            };
+
+            public int GetCallCount { get; private set; }
+
+            public Task<ProtectedBrowserStorageResult<TValue>> GetAsync<TValue>(string key)
+            {
+                GetCallCount++;
+
+                if (GetCallCount == 1)
+                {
+                    throw new TimeoutException("temporary failure");
+                }
+
+                object result = CreateProtectedBrowserStorageResult((TValue)(object)storedTokenPair);
+                return Task.FromResult((ProtectedBrowserStorageResult<TValue>)result);
+            }
+
+            public Task SetAsync(string key, object value)
+            {
+                return Task.CompletedTask;
+            }
+
+            public Task DeleteAsync(string key)
+            {
+                return Task.CompletedTask;
+            }
+
+            private static ProtectedBrowserStorageResult<TValue> CreateProtectedBrowserStorageResult<TValue>(TValue value)
+            {
+                var constructor = typeof(ProtectedBrowserStorageResult<TValue>).GetConstructors(
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)[0];
+
+                return (ProtectedBrowserStorageResult<TValue>)constructor.Invoke([true, value]);
+            }
         }
 
         #endregion

@@ -1,9 +1,11 @@
+using AngleSharp.Dom;
 using Bunit;
 using FWO.Api.Client;
 using FWO.Api.Client.Queries;
 using FWO.Basics;
 using FWO.Config.Api;
 using FWO.Data;
+using FWO.Data.Flow;
 using FWO.Data.Workflow;
 using FWO.Middleware.Client;
 using FWO.Services;
@@ -11,12 +13,15 @@ using FWO.Services.EventMediator;
 using FWO.Services.EventMediator.Interfaces;
 using FWO.Services.Workflow;
 using FWO.Ui.Pages.Request;
+using FWO.Ui.Shared;
 using FWO.Ui.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NUnit.Framework;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Security.Claims;
@@ -25,9 +30,9 @@ using System.Threading.Tasks;
 namespace FWO.Test
 {
     [TestFixture]
-    internal class UiRequestWorkflowTest
+    internal partial class UiRequestWorkflowTest
     {
-        private static void SetMember(object instance, string memberName, object? value)
+        internal static void SetMember(object instance, string memberName, object? value)
         {
             Type type = instance.GetType();
             PropertyInfo? property = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -47,7 +52,7 @@ namespace FWO.Test
             throw new MissingFieldException(type.FullName, memberName);
         }
 
-        private static T GetMember<T>(object instance, string memberName)
+        internal static T GetMember<T>(object instance, string memberName)
         {
             Type type = instance.GetType();
             PropertyInfo? property = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -65,14 +70,87 @@ namespace FWO.Test
             throw new MissingFieldException(type.FullName, memberName);
         }
 
-        private static void SetMatrix(WfHandler handler, string taskType, StateMatrix matrix)
+        internal static MethodInfo GetPrivateMethod(Type type, string methodName)
+        {
+            return type.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new MissingMethodException(type.FullName, methodName);
+        }
+
+        internal static async Task InvokePrivateTask(object instance, string methodName, params object[] args)
+        {
+            Task task = (Task)GetPrivateMethod(instance.GetType(), methodName).Invoke(instance, args)!;
+            await task;
+        }
+
+        internal static async Task<Task> StartPrivateTask<TComponent>(IRenderedComponent<TComponent> component, string methodName, params object[] args)
+            where TComponent : IComponent
+        {
+            Task? runningTask = null;
+            await component.InvokeAsync(() =>
+            {
+                runningTask = (Task)GetPrivateMethod(typeof(TComponent), methodName).Invoke(component.Instance, args)!;
+            });
+            return runningTask!;
+        }
+
+        internal static bool InvokePrivateBool(object instance, string methodName, params object[] args)
+        {
+            return (bool)GetPrivateMethod(instance.GetType(), methodName).Invoke(instance, args)!;
+        }
+
+        internal static bool HasNetworkFlowReference(NwObjectElement element)
+        {
+            return element.FlowNetworkObjectId.HasValue || element.FlowNetworkGroupId.HasValue;
+        }
+
+        internal static bool HasServiceFlowReference(NwServiceElement element)
+        {
+            return element.FlowServiceObjectId.HasValue || element.FlowServiceGroupId.HasValue;
+        }
+
+        internal static void SetMatrix(WfHandler handler, string taskType, StateMatrix matrix)
         {
             FieldInfo? field = typeof(WfHandler).GetField("stateMatrixDict", BindingFlags.NonPublic | BindingFlags.Instance);
             StateMatrixDict dict = (StateMatrixDict)(field?.GetValue(handler) ?? new StateMatrixDict());
             dict.Matrices[taskType] = matrix;
         }
 
-        private static DisplayReqTaskTable CreateReqTaskTable(WfHandler handler, WorkflowPhases phase)
+        private static StateMatrix CreateWorkflowMatrix(bool planningActive = true)
+        {
+            return new()
+            {
+                LowestInputState = 0,
+                LowestStartedState = 2,
+                LowestEndState = 10,
+                PhaseActive =
+                {
+                    [WorkflowPhases.request] = true,
+                    [WorkflowPhases.approval] = true,
+                    [WorkflowPhases.planning] = planningActive,
+                    [WorkflowPhases.verification] = false,
+                    [WorkflowPhases.implementation] = true,
+                    [WorkflowPhases.review] = false,
+                    [WorkflowPhases.recertification] = false
+                }
+            };
+        }
+
+        internal static WfHandler CreateWorkflowHandler(WorkflowPhases phase, string taskType, WfTicket ticket)
+        {
+            WfHandler handler = new()
+            {
+                Phase = phase,
+                ActTicket = ticket,
+                MasterStateMatrix = CreateWorkflowMatrix()
+            };
+            handler.userConfig.User.Dn = "cn=current";
+            handler.userConfig.User.DbId = 10;
+            handler.TicketList.Add(ticket);
+            SetMatrix(handler, taskType, CreateWorkflowMatrix(planningActive: phase == WorkflowPhases.planning));
+            return handler;
+        }
+
+        internal static DisplayReqTaskTable CreateReqTaskTable(WfHandler handler, WorkflowPhases phase)
         {
             DisplayReqTaskTable component = new();
             SetMember(component, nameof(DisplayReqTaskTable.WfHandler), handler);
@@ -80,7 +158,7 @@ namespace FWO.Test
             return component;
         }
 
-        private static DisplayTicketTable CreateTicketTable(WfHandler handler, WorkflowPhases phase)
+        internal static DisplayTicketTable CreateTicketTable(WfHandler handler, WorkflowPhases phase)
         {
             DisplayTicketTable component = new();
             SetMember(component, nameof(DisplayTicketTable.WfHandler), handler);
@@ -88,7 +166,114 @@ namespace FWO.Test
             return component;
         }
 
-        private static WfReqTask CreateAccessTask(long id, string sourceIp, string destinationIp, int servicePort)
+        internal static DisplayTicket CreateDisplayTicket(
+            WfHandler handler,
+            WorkflowPhases phase,
+            WfStateDict? states = null,
+            UserConfig? userConfig = null,
+            Func<Task>? resetParent = null)
+        {
+            DisplayTicket component = new();
+            SetMember(component, nameof(DisplayTicket.WfHandler), handler);
+            SetMember(component, nameof(DisplayTicket.Phase), phase);
+            SetMember(component, nameof(DisplayTicket.States), states ?? new WfStateDict());
+            SetMember(component, nameof(DisplayTicket.ResetParent), resetParent ?? DefaultInit.DoNothing);
+            SetMember(component, "userConfig", userConfig ?? new RequestWorkflowUserConfig());
+            return component;
+        }
+
+        internal static IRenderedComponent<DisplayTicket> RenderDisplayTicket(
+            BunitContext context,
+            WfHandler handler,
+            WorkflowPhases phase,
+            WfStateDict states,
+            Func<WfReqTask, Task>? startPhase = null,
+            Func<WfImplTask, Task>? startImplPhase = null)
+        {
+            context.JSInterop.Mode = JSRuntimeMode.Loose;
+            context.Services.AddAuthorizationCore();
+            context.Services.AddLocalization();
+            context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
+            context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(Roles.Requester));
+            context.Services.TryAddSingleton<ApiConnection>(new RequestWorkflowApiConn());
+            context.Services.AddSingleton(new MiddlewareClient("http://localhost/"));
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
+
+            IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
+                .AddChildContent<DisplayTicket>(child => child
+                    .Add(p => p.Phase, phase)
+                    .Add(p => p.States, states)
+                    .Add(p => p.WfHandler, handler)
+                    .Add(p => p.ResetParent, DefaultInit.DoNothing)
+                    .Add(p => p.StartPhase, startPhase ?? (Func<WfReqTask, Task>)DefaultInit.DoNothing)
+                    .Add(p => p.StartImplPhase, startImplPhase ?? (Func<WfImplTask, Task>)DefaultInit.DoNothing)));
+
+            return wrapper.FindComponent<DisplayTicket>();
+        }
+
+        internal static IRenderedComponent<DisplayReqTaskTable> RenderDisplayReqTaskTable(
+            BunitContext context,
+            WfHandler handler,
+            WorkflowPhases phase,
+            WfStateDict states,
+            params string[] roles)
+        {
+            context.JSInterop.Mode = JSRuntimeMode.Loose;
+            context.Services.AddAuthorizationCore();
+            context.Services.AddLocalization();
+            context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
+            context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(roles.Length > 0 ? roles : [Roles.Requester]));
+            context.Services.TryAddSingleton<ApiConnection>(new RequestWorkflowApiConn());
+            context.Services.AddSingleton(new MiddlewareClient("http://localhost/"));
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
+
+            IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
+                .AddChildContent<DisplayReqTaskTable>(child => child
+                    .Add(p => p.Phase, phase)
+                    .Add(p => p.States, states)
+                    .Add(p => p.WfHandler, handler)
+                    .Add(p => p.ResetParent, DefaultInit.DoNothing)
+                    .Add(p => p.StartPhase, (Func<WfReqTask, Task>)DefaultInit.DoNothing)
+                    .Add(p => p.StartImplPhase, (Func<WfImplTask, Task>)DefaultInit.DoNothing)));
+
+            return wrapper.FindComponent<DisplayReqTaskTable>();
+        }
+
+        internal static IRenderedComponent<DisplayTicketTable> RenderDisplayTicketTable(
+            BunitContext context,
+            WfHandler handler,
+            WorkflowPhases phase,
+            WfStateDict states,
+            params string[] roles)
+        {
+            context.JSInterop.Mode = JSRuntimeMode.Loose;
+            context.Services.AddAuthorizationCore();
+            context.Services.AddLocalization();
+            context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
+            context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(roles.Length > 0 ? roles : [Roles.Requester]));
+            context.Services.TryAddSingleton<ApiConnection>(new RequestWorkflowApiConn());
+            context.Services.AddSingleton(new MiddlewareClient("http://localhost/"));
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
+
+            IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
+                .AddChildContent<DisplayTicketTable>(child => child
+                    .Add(p => p.Phase, phase)
+                    .Add(p => p.States, states)
+                    .Add(p => p.WfHandler, handler)
+                    .Add(p => p.ResetParent, DefaultInit.DoNothing)
+                    .Add(p => p.StartPhase, (Func<WfReqTask, Task>)DefaultInit.DoNothing)
+                    .Add(p => p.StartImplPhase, (Func<WfImplTask, Task>)DefaultInit.DoNothing)));
+
+            return wrapper.FindComponent<DisplayTicketTable>();
+        }
+
+        internal static WfReqTask CreateAccessTask(long id, string sourceIp, string destinationIp, int servicePort)
         {
             return new()
             {
@@ -107,21 +292,31 @@ namespace FWO.Test
             };
         }
 
-        private static IRenderedComponent<DisplayRequestTask> RenderDisplayRequestTask(
+        internal static IRenderedComponent<DisplayRequestTask> RenderDisplayRequestTask(
             BunitContext context,
             WfHandler handler,
             WfStateDict states,
+            params string[] roles)
+        {
+            return RenderDisplayRequestTask(context, handler, states, null, roles);
+        }
+
+        internal static IRenderedComponent<DisplayRequestTask> RenderDisplayRequestTask(
+            BunitContext context,
+            WfHandler handler,
+            WfStateDict states,
+            Func<WfImplTask, Task>? startImplPhase,
             params string[] roles)
         {
             context.JSInterop.Mode = JSRuntimeMode.Loose;
             context.Services.AddAuthorizationCore();
             context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
             context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(roles));
-            context.Services.AddSingleton<ApiConnection>(new RequestWorkflowApiConn());
+            context.Services.TryAddSingleton<ApiConnection>(new RequestWorkflowApiConn());
             context.Services.AddSingleton(new MiddlewareClient("http://localhost/"));
-            context.Services.AddSingleton<UserConfig>(new RequestWorkflowUserConfig());
-            context.Services.AddSingleton<DomEventService>();
-            context.Services.AddSingleton<IEventMediator>(new EventMediator());
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
 
             IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
                 .AddChildContent<DisplayRequestTask>(child => child
@@ -129,12 +324,31 @@ namespace FWO.Test
                     .Add(p => p.States, states)
                     .Add(p => p.WfHandler, handler)
                     .Add(p => p.ResetParent, DefaultInit.DoNothing)
-                    .Add(p => p.StartImplPhase, (Func<WfImplTask, Task>)DefaultInit.DoNothing)));
+                    .Add(p => p.StartImplPhase, startImplPhase ?? (Func<WfImplTask, Task>)DefaultInit.DoNothing)));
 
             return wrapper.FindComponent<DisplayRequestTask>();
         }
 
-        private static IRenderedComponent<DisplayImplementationTask> RenderDisplayImplementationTask(
+        private static IRenderedComponent<TComponent> RenderWorkflowPage<TComponent>(BunitContext context, params string[] roles)
+            where TComponent : IComponent
+        {
+            context.JSInterop.Mode = JSRuntimeMode.Loose;
+            context.Services.AddAuthorizationCore();
+            context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
+            context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(roles));
+            context.Services.TryAddSingleton<ApiConnection>(new RequestWorkflowApiConn());
+            context.Services.AddSingleton(new MiddlewareClient("http://localhost/"));
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
+
+            IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
+                .AddChildContent<TComponent>());
+
+            return wrapper.FindComponent<TComponent>();
+        }
+
+        internal static IRenderedComponent<DisplayImplementationTask> RenderDisplayImplementationTask(
             BunitContext context,
             WfHandler handler,
             WfStateDict states,
@@ -144,10 +358,10 @@ namespace FWO.Test
             context.Services.AddAuthorizationCore();
             context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
             context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(roles));
-            context.Services.AddSingleton<ApiConnection>(new RequestWorkflowApiConn());
-            context.Services.AddSingleton<UserConfig>(new RequestWorkflowUserConfig());
-            context.Services.AddSingleton<DomEventService>();
-            context.Services.AddSingleton<IEventMediator>(new EventMediator());
+            context.Services.TryAddSingleton<ApiConnection>(new RequestWorkflowApiConn());
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
 
             IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
                 .AddChildContent<DisplayImplementationTask>(child => child
@@ -161,7 +375,7 @@ namespace FWO.Test
             return wrapper.FindComponent<DisplayImplementationTask>();
         }
 
-        private static IRenderedComponent<PromoteObject> RenderPromoteObject(
+        internal static IRenderedComponent<PromoteObject> RenderPromoteObject(
             BunitContext context,
             WfStateDict states,
             StateMatrix stateMatrix,
@@ -173,9 +387,9 @@ namespace FWO.Test
             context.Services.AddSingleton<IAuthorizationService, AllowAllAuthorizationService>();
             context.Services.AddSingleton<AuthenticationStateProvider>(new RequestWorkflowAuthStateProvider(roles));
             context.Services.AddSingleton(new MiddlewareClient("http://localhost/"));
-            context.Services.AddSingleton<UserConfig>(new RequestWorkflowUserConfig());
-            context.Services.AddSingleton<DomEventService>();
-            context.Services.AddSingleton<IEventMediator>(new EventMediator());
+            context.Services.TryAddSingleton<UserConfig>(new RequestWorkflowUserConfig());
+            context.Services.TryAddSingleton<DomEventService>();
+            context.Services.TryAddSingleton<IEventMediator>(new EventMediator());
 
             IRenderedComponent<CascadingAuthenticationState> wrapper = context.Render<CascadingAuthenticationState>(parameters => parameters
                 .AddChildContent<PromoteObject>(child => child
@@ -192,359 +406,236 @@ namespace FWO.Test
         }
 
         [Test]
-        public void DisplayReqTaskTable_RequestPhase_AllowsEditBelowLowestEndState()
+        public async Task RequestPlannings_StartPlanTask_StampsStartAndOpensPlanMode()
         {
-            WfHandler handler = new()
-            {
-                EditTicketMode = true
-            };
+            string taskType = WfTaskType.access.ToString();
             WfReqTask reqTask = new()
             {
-                TaskType = WfTaskType.access.ToString(),
-                StateId = 1
+                Id = 11,
+                TicketId = 7,
+                TaskType = taskType,
+                StateId = 0
             };
-            SetMatrix(handler, reqTask.TaskType, new StateMatrix
-            {
-                LowestStartedState = 1,
-                LowestEndState = 5
-            });
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            WfHandler handler = CreateWorkflowHandler(WorkflowPhases.planning, taskType, ticket);
+            DateTime beforeStart = DateTime.Now;
 
-            DisplayReqTaskTable component = CreateReqTaskTable(handler, WorkflowPhases.request);
-            MethodInfo? method = typeof(DisplayReqTaskTable).GetMethod("CanEditReqTaskInPhase", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canEdit = (bool)method!.Invoke(component, [reqTask])!;
-
-            Assert.That(canEdit, Is.True);
-        }
-
-        [Test]
-        public void DisplayTicketTable_ApprovalPhase_AllowsEditInPhaseRange()
-        {
-            WfHandler handler = new()
-            {
-                ReadOnlyMode = false,
-                MasterStateMatrix = new StateMatrix
-                {
-                    LowestInputState = 49,
-                    LowestEndState = 99
-                }
-            };
-            DisplayTicketTable component = CreateTicketTable(handler, WorkflowPhases.approval);
-            MethodInfo? method = typeof(DisplayTicketTable).GetMethod("CanEditTicketInPhase", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canEdit = (bool)method!.Invoke(component, [new WfTicket { StateId = 60 }])!;
-
-            Assert.That(canEdit, Is.True);
-        }
-
-        [Test]
-        public void DisplayTicketTable_ApprovalPhase_UsesDetailsOutsidePhaseRange()
-        {
-            WfHandler handler = new()
-            {
-                ReadOnlyMode = false,
-                MasterStateMatrix = new StateMatrix
-                {
-                    LowestInputState = 49,
-                    LowestEndState = 99
-                }
-            };
-            DisplayTicketTable component = CreateTicketTable(handler, WorkflowPhases.approval);
-            MethodInfo? method = typeof(DisplayTicketTable).GetMethod("CanEditTicketInPhase", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canEdit = (bool)method!.Invoke(component, [new WfTicket { StateId = 99 }])!;
-
-            Assert.That(canEdit, Is.False);
-        }
-
-        [Test]
-        public void DisplayTicketTable_ReadOnlyMode_UsesDetailsInPhaseRange()
-        {
-            WfHandler handler = new()
-            {
-                ReadOnlyMode = true,
-                MasterStateMatrix = new StateMatrix
-                {
-                    LowestInputState = 49,
-                    LowestEndState = 99
-                }
-            };
-            DisplayTicketTable component = CreateTicketTable(handler, WorkflowPhases.approval);
-            MethodInfo? method = typeof(DisplayTicketTable).GetMethod("CanEditTicketInPhase", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canEdit = (bool)method!.Invoke(component, [new WfTicket { StateId = 60 }])!;
-
-            Assert.That(canEdit, Is.False);
-        }
-
-        [Test]
-        public void DisplayReqTaskTable_ApprovalPhase_BlocksStructuralTaskChanges()
-        {
-            WfHandler handler = new()
-            {
-                EditTicketMode = true
-            };
-            WfReqTask reqTask = new()
-            {
-                TaskType = WfTaskType.access.ToString(),
-                StateId = 1
-            };
-            SetMatrix(handler, reqTask.TaskType, new StateMatrix
-            {
-                LowestStartedState = 1,
-                LowestEndState = 5
-            });
-
-            DisplayReqTaskTable component = CreateReqTaskTable(handler, WorkflowPhases.approval);
-            MethodInfo? method = typeof(DisplayReqTaskTable).GetMethod("CanEditReqTaskInPhase", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canEdit = (bool)method!.Invoke(component, [reqTask])!;
-
-            Assert.That(canEdit, Is.False);
-        }
-
-        [Test]
-        public void DisplayReqTaskTable_RequestPhase_AllowsStructuralTaskChangesInTicketEditMode()
-        {
-            WfHandler handler = new()
-            {
-                EditTicketMode = true
-            };
-            DisplayReqTaskTable component = CreateReqTaskTable(handler, WorkflowPhases.request);
-            MethodInfo? method = typeof(DisplayReqTaskTable).GetMethod("CanChangeReqTaskStructure", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canChange = (bool)method!.Invoke(component, [])!;
-
-            Assert.That(canChange, Is.True);
-        }
-
-        [Test]
-        public void DisplayReqTaskTable_ApprovalPhase_BlocksStructuralTaskChangesInTicketEditMode()
-        {
-            WfHandler handler = new()
-            {
-                EditTicketMode = true
-            };
-            DisplayReqTaskTable component = CreateReqTaskTable(handler, WorkflowPhases.approval);
-            MethodInfo? method = typeof(DisplayReqTaskTable).GetMethod("CanChangeReqTaskStructure", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-
-            bool canChange = (bool)method!.Invoke(component, [])!;
-
-            Assert.That(canChange, Is.False);
-        }
-
-        [Test]
-        public async Task DisplayRequestTask_NewTask_AddsTaskTypeDropdownComparedToExistingTask()
-        {
-            WfHandler existingHandler = new()
-            {
-                DisplayReqTaskMode = true,
-                EditReqTaskMode = true,
-                AddReqTaskMode = false,
-                ActReqTask = new WfReqTask
-                {
-                    Id = 12,
-                    Title = "Task",
-                    TaskType = WfTaskType.generic.ToString(),
-                    StateId = 0,
-                    FreeText = "text"
-                }
-            };
-            existingHandler.ActTicket.Tasks.Add(existingHandler.ActReqTask);
-            WfStateDict states = new() { Name = { [0] = "Draft" } };
-            int existingDropdownCount;
-            await using (BunitContext existingContext = new())
-            {
-                IRenderedComponent<DisplayRequestTask> existingComponent = RenderDisplayRequestTask(existingContext, existingHandler, states, Roles.Requester);
-                existingDropdownCount = existingComponent.FindAll("input[id^='dropdown-input-']").Count;
-            }
-
-            WfHandler newHandler = new()
-            {
-                DisplayReqTaskMode = true,
-                EditReqTaskMode = true,
-                AddReqTaskMode = true,
-                ActReqTask = new WfReqTask
-                {
-                    Id = 0,
-                    Title = "Task",
-                    TaskType = WfTaskType.generic.ToString(),
-                    StateId = 0
-                }
-            };
-            newHandler.ActTicket.Tasks.Add(newHandler.ActReqTask);
-            int newDropdownCount;
-            await using (BunitContext newContext = new())
-            {
-                IRenderedComponent<DisplayRequestTask> newComponent = RenderDisplayRequestTask(newContext, newHandler, states, Roles.Requester);
-                newDropdownCount = newComponent.FindAll("input[id^='dropdown-input-']").Count;
-            }
-
-            Assert.That(newDropdownCount, Is.GreaterThan(existingDropdownCount));
-        }
-
-        [Test]
-        public async Task DisplayAccessElements_ReadOnlyObjectEntriesPreferGroupName()
-        {
             await using BunitContext context = new();
-            context.Services.AddSingleton<ApiConnection>(new RequestWorkflowApiConn());
-            context.Services.AddSingleton<UserConfig>(new RequestWorkflowUserConfig());
-            List<NwObjectElement> sources =
-            [
-                new() { NetworkId = 42, GroupName = "AR-Displayed", Name = "HiddenSourceName" }
-            ];
-            List<NwObjectElement> destinations =
-            [
-                new() { NetworkId = 43, GroupName = "AR-Destination", Name = "HiddenDestinationName" }
-            ];
-            List<NwServiceElement> services =
-            [
-                new() { ServiceId = 44, GroupName = "SG-Displayed", Name = "HiddenServiceName" }
-            ];
+            IRenderedComponent<RequestPlannings> component = RenderWorkflowPage<RequestPlannings>(context, Roles.Planner);
+            SetMember(component.Instance, "wfHandler", handler);
 
-            IRenderedComponent<DisplayAccessElements> component = context.Render<DisplayAccessElements>(parameters => parameters
-                .Add(p => p.Sources, sources)
-                .Add(p => p.Destinations, destinations)
-                .Add(p => p.Services, services)
-                .Add(p => p.IpProtos, new List<IpProtocol>())
-                .Add(p => p.EditMode, false));
+            await (await StartPrivateTask(component, "StartPlanTask", reqTask));
 
             Assert.Multiple(() =>
             {
-                Assert.That(component.Markup, Does.Contain("AR-Displayed"));
-                Assert.That(component.Markup, Does.Contain("AR-Destination"));
-                Assert.That(component.Markup, Does.Contain("SG-Displayed"));
-                Assert.That(component.Markup, Does.Not.Contain("HiddenSourceName"));
-                Assert.That(component.Markup, Does.Not.Contain("HiddenDestinationName"));
-                Assert.That(component.Markup, Does.Not.Contain("HiddenServiceName"));
+                Assert.That(reqTask.Start, Is.Not.Null);
+                Assert.That(reqTask.Start!.Value, Is.GreaterThanOrEqualTo(beforeStart));
+                Assert.That(handler.ActReqTask.Start, Is.EqualTo(reqTask.Start));
+                Assert.That(handler.ActReqTask.CurrentHandler, Is.SameAs(handler.userConfig.User));
+                Assert.That(handler.PlanReqTaskMode, Is.True);
             });
         }
 
         [Test]
-        public async Task DisplayImplementationTask_GroupCreateReadOnlyDisplaysGroupElements()
+        public async Task RequestApprovals_StartApproveTask_OpensApproveModeWithoutStampingStart()
         {
+            string taskType = WfTaskType.access.ToString();
+            WfReqTask reqTask = new()
+            {
+                Id = 11,
+                TicketId = 7,
+                TaskType = taskType,
+                StateId = 0
+            };
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            WfHandler handler = CreateWorkflowHandler(WorkflowPhases.approval, taskType, ticket);
+
+            await using BunitContext context = new();
+            IRenderedComponent<RequestApprovals> component = RenderWorkflowPage<RequestApprovals>(context, Roles.Approver);
+            SetMember(component.Instance, "wfHandler", handler);
+
+            await (await StartPrivateTask(component, "StartApproveTask", reqTask));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reqTask.Start, Is.Null);
+                Assert.That(handler.ActReqTask.Start, Is.Null);
+                Assert.That(handler.ActReqTask.CurrentHandler, Is.SameAs(handler.userConfig.User));
+                Assert.That(handler.ApproveReqTaskMode, Is.True);
+            });
+        }
+
+        [Test]
+        public async Task RequestImplementations_StartImplementTask_StampsStartClearsStopAndOpensImplementMode()
+        {
+            string taskType = WfTaskType.access.ToString();
+            WfReqTask reqTask = new()
+            {
+                Id = 11,
+                TicketId = 7,
+                TaskType = taskType,
+                StateId = 0
+            };
             WfImplTask implTask = new()
             {
                 Id = 21,
-                Title = "Create groups",
-                TaskType = WfTaskType.group_create.ToString(),
-                StateId = 1,
-                ImplElements =
-                [
-                    new WfImplElement
-                    {
-                        Id = 1,
-                        ImplTaskId = 21,
-                        Field = ElemFieldType.source.ToString(),
-                        NetworkId = 42,
-                        GroupName = "AR-ImplGroup",
-                        Name = "HiddenObjectName"
-                    },
-                    new WfImplElement
-                    {
-                        Id = 2,
-                        ImplTaskId = 21,
-                        Field = ElemFieldType.service.ToString(),
-                        ServiceId = 44,
-                        GroupName = "SG-ImplGroup",
-                        Name = "HiddenServiceName"
-                    }
-                ]
+                TicketId = 7,
+                ReqTaskId = 11,
+                TaskType = taskType,
+                StateId = 0,
+                Stop = new DateTime(2026, 1, 1)
             };
-            WfHandler handler = new()
-            {
-                DisplayImplTaskMode = true,
-                EditImplTaskMode = false,
-                ActImplTask = implTask,
-                ActReqTask = new WfReqTask(),
-                Devices = []
-            };
-            WfStateDict states = new() { Name = { [1] = "Open" } };
+            reqTask.ImplementationTasks.Add(implTask);
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            WfHandler handler = CreateWorkflowHandler(WorkflowPhases.implementation, taskType, ticket);
+            DateTime beforeStart = DateTime.Now;
 
             await using BunitContext context = new();
-            IRenderedComponent<DisplayImplementationTask> component = RenderDisplayImplementationTask(context, handler, states, Roles.Implementer);
+            IRenderedComponent<RequestImplementations> component = RenderWorkflowPage<RequestImplementations>(context, Roles.Implementer);
+            SetMember(component.Instance, "wfHandler", handler);
+
+            await (await StartPrivateTask(component, "StartImplementTask", implTask));
 
             Assert.Multiple(() =>
             {
-                Assert.That(component.Markup, Does.Contain("AR-ImplGroup"));
-                Assert.That(component.Markup, Does.Contain("SG-ImplGroup"));
-                Assert.That(component.Markup, Does.Not.Contain("HiddenObjectName"));
-                Assert.That(component.Markup, Does.Not.Contain("HiddenServiceName"));
+                Assert.That(implTask.Start, Is.Not.Null);
+                Assert.That(implTask.Start!.Value, Is.GreaterThanOrEqualTo(beforeStart));
+                Assert.That(implTask.Stop, Is.Null);
+                Assert.That(handler.ActImplTask.Start, Is.EqualTo(implTask.Start));
+                Assert.That(handler.ActImplTask.Stop, Is.Null);
+                Assert.That(handler.ActImplTask.CurrentHandler, Is.SameAs(handler.userConfig.User));
+                Assert.That(handler.ImplementImplTaskMode, Is.True);
             });
         }
 
         [Test]
-        public async Task DisplayRequestTask_ReinitializesElementsWhenActiveTaskChanges()
+        public async Task RequestReviews_StartReviewTask_OpensReviewModeWithoutChangingImplementationTimes()
         {
-            WfReqTask firstTask = CreateAccessTask(12, "10.0.0.1", "10.0.1.1", 80);
-            WfReqTask secondTask = CreateAccessTask(13, "10.0.0.2", "10.0.1.2", 443);
-            WfHandler handler = new()
+            string taskType = WfTaskType.access.ToString();
+            DateTime existingStart = new(2026, 1, 1);
+            DateTime existingStop = new(2026, 1, 2);
+            WfReqTask reqTask = new()
             {
-                DisplayReqTaskMode = true,
-                ReadOnlyMode = true,
-                ActReqTask = firstTask,
-                ActTicket = new WfTicket { Id = 100, Tasks = [firstTask, secondTask] },
-                Devices = []
+                Id = 11,
+                TicketId = 7,
+                TaskType = taskType,
+                StateId = 0
             };
-            SetMatrix(handler, WfTaskType.access.ToString(), new StateMatrix());
-            WfStateDict states = new() { Name = { [0] = "Draft" } };
+            WfImplTask implTask = new()
+            {
+                Id = 21,
+                TicketId = 7,
+                ReqTaskId = 11,
+                TaskType = taskType,
+                StateId = 0,
+                Start = existingStart,
+                Stop = existingStop
+            };
+            reqTask.ImplementationTasks.Add(implTask);
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            WfHandler handler = CreateWorkflowHandler(WorkflowPhases.review, taskType, ticket);
 
             await using BunitContext context = new();
-            IRenderedComponent<DisplayRequestTask> component = RenderDisplayRequestTask(context, handler, states, Roles.Requester);
+            IRenderedComponent<RequestReviews> component = RenderWorkflowPage<RequestReviews>(context, Roles.Reviewer);
+            SetMember(component.Instance, "wfHandler", handler);
 
-            Assert.That(GetMember<List<NwObjectElement>>(component.Instance, "actSources").Single().IpString, Is.EqualTo("10.0.0.1/32"));
-            Assert.That(GetMember<List<NwObjectElement>>(component.Instance, "actDestinations").Single().IpString, Is.EqualTo("10.0.1.1/32"));
-            Assert.That(GetMember<List<NwServiceElement>>(component.Instance, "actServices").Single().Port, Is.EqualTo(80));
+            await (await StartPrivateTask(component, "StartReviewTask", implTask));
 
-            handler.ActReqTask = secondTask;
-            await component.InvokeAsync(() => component.Instance.SetParametersAsync(ParameterView.FromDictionary(new Dictionary<string, object?>
+            Assert.Multiple(() =>
             {
-                [nameof(DisplayRequestTask.Phase)] = WorkflowPhases.request,
-                [nameof(DisplayRequestTask.States)] = states,
-                [nameof(DisplayRequestTask.WfHandler)] = handler,
-                [nameof(DisplayRequestTask.ResetParent)] = (Func<Task>)DefaultInit.DoNothing,
-                [nameof(DisplayRequestTask.StartImplPhase)] = (Func<WfImplTask, Task>)DefaultInit.DoNothing
-            })));
-
-            Assert.That(GetMember<List<NwObjectElement>>(component.Instance, "actSources").Single().IpString, Is.EqualTo("10.0.0.2/32"));
-            Assert.That(GetMember<List<NwObjectElement>>(component.Instance, "actDestinations").Single().IpString, Is.EqualTo("10.0.1.2/32"));
-            Assert.That(GetMember<List<NwServiceElement>>(component.Instance, "actServices").Single().Port, Is.EqualTo(443));
+                Assert.That(implTask.Start, Is.EqualTo(existingStart));
+                Assert.That(implTask.Stop, Is.EqualTo(existingStop));
+                Assert.That(handler.ActImplTask.Start, Is.EqualTo(existingStart));
+                Assert.That(handler.ActImplTask.Stop, Is.EqualTo(existingStop));
+                Assert.That(handler.ActImplTask.CurrentHandler, Is.SameAs(handler.userConfig.User));
+                Assert.That(handler.ReviewImplTaskMode, Is.True);
+            });
         }
 
         [Test]
-        public async Task PromoteObject_MissingStateName_FallsBackToStateId()
+        public async Task RequestImplementations_SelectDeviceShowsImplementationTable()
         {
+            string taskType = WfTaskType.access.ToString();
+            WfImplTask implTask = new()
+            {
+                Id = 21,
+                TicketId = 7,
+                ReqTaskId = 11,
+                TaskType = taskType,
+                DeviceId = 1
+            };
+            WfReqTask reqTask = new()
+            {
+                Id = 11,
+                TicketId = 7,
+                TaskType = taskType,
+                ImplementationTasks = [implTask]
+            };
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            WfHandler handler = CreateWorkflowHandler(WorkflowPhases.implementation, taskType, ticket);
+            handler.userConfig.ReqOwnerBased = false;
+
             await using BunitContext context = new();
-            WfStateDict states = new();
-            StateMatrix stateMatrix = new()
-            {
-                Matrix = new()
-                {
-                    [0] = [5, 6]
-                }
-            };
-            WfStatefulObject statefulObject = new()
-            {
-                StateId = 0
-            };
+            IRenderedComponent<RequestImplementations> component = RenderWorkflowPage<RequestImplementations>(context, Roles.Implementer);
+            SetMember(component.Instance, "wfHandler", handler);
 
-            IRenderedComponent<PromoteObject> component = RenderPromoteObject(context, states, stateMatrix, statefulObject, Roles.Requester);
+            await component.InvokeAsync(async () => await InvokePrivateTask(component.Instance, "SelectDevice", new Device { Id = 1, Name = "gw-1" }));
 
-            Assert.That(component.Markup, Does.Contain("promote_to"));
-            Assert.That(component.Markup, Does.Contain("dropdown-input-"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetMember<bool>(component.Instance, "DisplayTickets"), Is.False);
+                Assert.That(handler.AllVisibleImplTasks, Has.Count.EqualTo(1));
+                Assert.That(component.Markup, Does.Not.Contain("create_ticket"));
+            });
         }
 
-        private sealed class RequestWorkflowApiConn : SimulatedApiConnection
+        [Test]
+        public async Task RequestReviews_SelectDeviceShowsImplementationTable()
         {
+            string taskType = WfTaskType.access.ToString();
+            WfImplTask implTask = new()
+            {
+                Id = 21,
+                TicketId = 7,
+                ReqTaskId = 11,
+                TaskType = taskType,
+                DeviceId = 1
+            };
+            WfReqTask reqTask = new()
+            {
+                Id = 11,
+                TicketId = 7,
+                TaskType = taskType,
+                ImplementationTasks = [implTask]
+            };
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            WfHandler handler = CreateWorkflowHandler(WorkflowPhases.review, taskType, ticket);
+            handler.userConfig.ReqOwnerBased = false;
+
+            await using BunitContext context = new();
+            IRenderedComponent<RequestReviews> component = RenderWorkflowPage<RequestReviews>(context, Roles.Reviewer);
+            SetMember(component.Instance, "wfHandler", handler);
+
+            await component.InvokeAsync(async () => await InvokePrivateTask(component.Instance, "SelectDevice", new Device { Id = 1, Name = "gw-1" }));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetMember<bool>(component.Instance, "DisplayTickets"), Is.False);
+                Assert.That(handler.AllVisibleImplTasks, Has.Count.EqualTo(1));
+            });
+        }
+
+        internal sealed class RequestWorkflowApiConn : SimulatedApiConnection
+        {
+            public List<string> Queries { get; } = [];
+            public List<FlowNwObject> FlowNwObjects { get; set; } = [];
+            public List<FlowSvcObject> FlowSvcObjects { get; set; } = [];
+            public List<FlowTimeObject> FlowTimeObjects { get; set; } = [];
+            public List<Management> Managements { get; set; } = [];
+
             public override Task<QueryResponseType> SendQueryAsync<QueryResponseType>(string query, object? variables = null, string? operationName = null, FWO.Api.Client.QueryChunkingOptions? chunkingOptions = null)
             {
+                Queries.Add(query);
                 if (query == StmQueries.getRuleActions)
                 {
                     return Task.FromResult((QueryResponseType)(object)new List<RuleAction>());
@@ -559,14 +650,26 @@ namespace FWO.Test
                 }
                 if (query == DeviceQueries.getManagementNames)
                 {
-                    return Task.FromResult((QueryResponseType)(object)new List<Management>());
+                    return Task.FromResult((QueryResponseType)(object)Managements);
+                }
+                if (query == FlowQueries.getFlowRequestNwObjectCatalog)
+                {
+                    return Task.FromResult((QueryResponseType)(object)FlowNwObjects);
+                }
+                if (query == FlowQueries.getFlowRequestSvcObjectCatalog)
+                {
+                    return Task.FromResult((QueryResponseType)(object)FlowSvcObjects);
+                }
+                if (query == FlowQueries.getFlowRequestTimeObjectCatalog)
+                {
+                    return Task.FromResult((QueryResponseType)(object)FlowTimeObjects);
                 }
 
                 throw new NotImplementedException($"Unexpected query: {query}");
             }
         }
 
-        private sealed class RequestWorkflowUserConfig : SimulatedUserConfig
+        internal sealed class RequestWorkflowUserConfig : SimulatedUserConfig
         {
             public RequestWorkflowUserConfig()
             {

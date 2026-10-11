@@ -2,7 +2,7 @@ query RuleDetailById(
     $rule_ids: [bigint!]
     $rule_action: String
 ) {
-    rule(
+    firewall_rule(
         where:{
             rule_id: {_in: $rule_ids}
             rule_action: { _eq: $rule_action}
@@ -12,7 +12,13 @@ query RuleDetailById(
         rule_uid
         rule_id
         mgm_id
-        rule_froms(order_by:{ object: {obj_id: asc}}){
+        rule_froms(
+            where: {
+                active: { _eq: true }
+                removed: { _is_null: true }
+            }
+            order_by:{ object: {obj_id: asc}}
+        ){
             object{
                 obj_id
                 obj_name
@@ -41,7 +47,13 @@ query RuleDetailById(
                 }
             }
         }
-        rule_tos(order_by: { object: { obj_name: asc } }) {
+        rule_tos(
+            where: {
+                active: { _eq: true }
+                removed: { _is_null: true }
+            }
+            order_by: { object: { obj_name: asc } }
+        ) {
             object {
                 obj_id
                 obj_name
@@ -70,7 +82,13 @@ query RuleDetailById(
                 }
             }
         }
-        rule_services(order_by: { service: { svc_name: asc } }) {
+        rule_services(
+            where: {
+                active: { _eq: true }
+                removed: { _is_null: true }
+            }
+            order_by: { service: { svc_name: asc } }
+        ) {
             service {
                 svc_id
                 svc_uid
@@ -137,9 +155,14 @@ query RuleDetailById(
         rule_metadatum {
             rule_last_hit
         }
-        rule_owners
-        {
+        rule_owners(
+            where: {
+                removed: { _is_null: true }
+            }
+            order_by: { owner_id: asc }
+        ) {
             owner_id
+            owner_mapping_source_id
         }
     }
 }

@@ -9,12 +9,21 @@
       become: true
 
     - name: sync test files to frontend target
-      synchronize:
+      ansible.posix.synchronize:
         src: FWO.Test
         dest: "{{ test_dir }}/csharp"
         rsync_opts:
           - "--chown={{ fworch_user }}:{{ fworch_group }}"
           - "--delete"
+      become: true
+
+    - name: provide api metadata for the report permission tests
+      copy:
+        src: roles/api/files/replace_metadata.json
+        dest: "{{ test_dir }}/csharp/replace_metadata.json"
+        owner: "{{ fworch_user }}"
+        group: "{{ fworch_group }}"
+        mode: "0644"
       become: true
 
     - name: run csharp tests
@@ -43,6 +52,8 @@
         chdir: "/usr/local/fworch/importer"
       command: >
         {{ importer_venv_dir }}/bin/python3 -m pytest -s . -p no:cacheprovider -v
+      become: true
+      become_user: "{{ fworch_user }}"
       register: pytest_tests
       ignore_errors: false
 

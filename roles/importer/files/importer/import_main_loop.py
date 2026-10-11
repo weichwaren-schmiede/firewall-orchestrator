@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 # main importer loop in python (also able to run distributed)
 # run import loop every x seconds (adjust sleep time per management depending on the change frequency )
-
 import argparse
 import sys
 import time
@@ -136,6 +137,7 @@ def main(
     FWOLogger(debug_level)
     verify_certificates = verify_certificates_default or False
     fwo_globals.set_global_values(verify_certificates, suppress_certificate_warnings)
+    fwo_globals.set_cli_verify_certs(verify_certificates)
     if suppress_certificate_warnings:
         urllib3.disable_warnings()  # type: ignore[suppress ssl warnings only]
 

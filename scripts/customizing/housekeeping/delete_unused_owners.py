@@ -10,8 +10,6 @@ import sys
 from dataclasses import dataclass
 from typing import Any, cast
 
-import urllib3
-
 from scripts.customizing.customizing import CustomizingError, call, login
 from scripts.customizing.fwo_custom_lib.basic_helpers import FWOLogger, get_logger
 
@@ -409,7 +407,6 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     args: argparse.Namespace = parse_args(argv)
     logger: FWOLogger = get_logger(args.debug_level)
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     try:
         return run_cleanup(args, logger)
     except (CustomizingError, KeyError, OSError, ValueError):
@@ -417,5 +414,5 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

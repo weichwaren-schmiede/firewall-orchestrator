@@ -1,4 +1,5 @@
 using System.Net;
+using DnsClient;
 using NetTools;
 using NUnit.Framework;
 using FWO.Basics;
@@ -201,6 +202,28 @@ namespace FWO.Test
         }
 
         [Test]
+        public void RangeOverlapExists_OverlappingIPv6_ReturnsTrue()
+        {
+            IPAddressRange a = IPAddressRange.Parse("2001:db8::1-2001:db8::10");
+            IPAddressRange b = IPAddressRange.Parse("2001:db8::5-2001:db8::20");
+
+            bool result = IpOperations.RangeOverlapExists(a, b);
+
+            Assert.That(result);
+        }
+
+        [Test]
+        public void RangeOverlapExists_MixedFamilies_ReturnsFalse()
+        {
+            IPAddressRange ipv4Range = IPAddressRange.Parse("10.0.0.1-10.0.0.10");
+            IPAddressRange ipv6Range = IPAddressRange.Parse("2001:db8::1-2001:db8::10");
+
+            bool result = IpOperations.RangeOverlapExists(ipv4Range, ipv6Range);
+
+            Assert.That(!result);
+        }
+
+        [Test]
         public void IpToUint_And_Back_Roundtrip()
         {
             // Arrange
@@ -351,6 +374,14 @@ namespace FWO.Test
 
             // Assert
             ClassicAssert.AreEqual("10.0.0.5/255.255.255.255", s);
+        }
+
+        [Test]
+        public void ToDotNotation_UnalignedRange_ReturnsSmallestContainingNetwork()
+        {
+            string s = IpOperations.ToDotNotation("192.168.1.1", "192.168.1.9");
+
+            ClassicAssert.AreEqual("192.168.1.0/255.255.255.240", s);
         }
 
         [Test]
@@ -536,6 +567,80 @@ namespace FWO.Test
             Assert.IsNotNull(intersection);
             Assert.AreEqual("2001:db8::2", intersection!.Begin.ToString());
             Assert.AreEqual("2001:db8::2", intersection.End.ToString());
+        }
+        [Test]
+        public void ToCompactNotation_SingleAddress_ReturnsIpWithoutMask()
+        {
+            Assert.AreEqual("10.1.0.1", IpOperations.ToCompactNotation("10.1.0.1/32", "10.1.0.1/32"));
+            Assert.AreEqual("10.1.0.1", IpOperations.ToCompactNotation("10.1.0.1", "10.1.0.1"));
+            Assert.AreEqual("10.1.0.1", IpOperations.ToCompactNotation("10.1.0.1/32", ""));
+        }
+
+        [Test]
+        public void ToCompactNotation_Subnet_ReturnsCidr()
+        {
+            Assert.AreEqual("10.2.0.0/24", IpOperations.ToCompactNotation("10.2.0.0/24", "10.2.0.255/24"));
+            Assert.AreEqual("10.2.0.0/24", IpOperations.ToCompactNotation("10.2.0.0/24", ""));
+            Assert.AreEqual("10.2.0.0/31", IpOperations.ToCompactNotation("10.2.0.0", "10.2.0.1"));
+            Assert.AreEqual("0.0.0.0/0", IpOperations.ToCompactNotation("0.0.0.0", "255.255.255.255"));
+        }
+
+        [Test]
+        public void ToCompactNotation_Range_ReturnsStartAndEndWithoutMask()
+        {
+            Assert.AreEqual("10.3.0.1-10.3.0.9", IpOperations.ToCompactNotation("10.3.0.1/32", "10.3.0.9/32"));
+            Assert.AreEqual("10.3.0.1-10.3.1.0", IpOperations.ToCompactNotation("10.3.0.1", "10.3.1.0"));
+        }
+
+        [Test]
+        public void ToCompactNotation_IPv6_ReturnsCompactNotation()
+        {
+            Assert.AreEqual("2001:db8::1", IpOperations.ToCompactNotation("2001:db8::1/128", "2001:db8::1/128"));
+            Assert.AreEqual("2001:db8::/120", IpOperations.ToCompactNotation("2001:db8::", "2001:db8::ff"));
+            Assert.AreEqual("2001:db8::1-2001:db8::9", IpOperations.ToCompactNotation("2001:db8::1", "2001:db8::9"));
+        }
+
+        [Test]
+        public void ToCompactNotation_InvalidOrMixedInput_ReturnsStartUnchanged()
+        {
+            Assert.AreEqual("not-an-ip", IpOperations.ToCompactNotation("not-an-ip", "10.0.0.1"));
+            Assert.AreEqual("10.0.0.1", IpOperations.ToCompactNotation("10.0.0.1", "2001:db8::1"));
+        }
+
+        private static readonly List<string> kPtrNames = ["host.example.test"];
+
+        /// <summary>
+        /// A response without error is definitive, with or without PTR records.
+        /// </summary>
+        [Test]
+        public void SelectReverseLookupNames_ReturnsTheNamesOfAResponseWithoutError()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(IpOperations.SelectReverseLookupNames(DnsHeaderResponseCode.NoError, kPtrNames), Is.EqualTo(kPtrNames));
+                Assert.That(IpOperations.SelectReverseLookupNames(DnsHeaderResponseCode.NoError, Array.Empty<string>()), Is.Empty);
+            });
+        }
+
+        /// <summary>
+        /// A non-existent domain answers that the address has no name.
+        /// </summary>
+        [Test]
+        public void SelectReverseLookupNames_ReturnsNoNameForANonExistentDomain()
+        {
+            Assert.That(IpOperations.SelectReverseLookupNames(DnsHeaderResponseCode.NotExistentDomain, kPtrNames), Is.Empty);
+        }
+
+        /// <summary>
+        /// Other response codes may change with the next query and therefore are no answer.
+        /// </summary>
+        [TestCase(DnsHeaderResponseCode.ServerFailure)]
+        [TestCase(DnsHeaderResponseCode.Refused)]
+        [TestCase(DnsHeaderResponseCode.FormatError)]
+        [TestCase(DnsHeaderResponseCode.NotImplemented)]
+        public void SelectReverseLookupNames_ReturnsNullForAFailedLookup(DnsHeaderResponseCode responseCode)
+        {
+            Assert.That(IpOperations.SelectReverseLookupNames(responseCode, kPtrNames), Is.Null);
         }
     }
 }

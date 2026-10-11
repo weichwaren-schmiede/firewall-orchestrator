@@ -1,8 +1,8 @@
 # Firewall Orchestrator – Version / Feature Overview
 
 This document lists each Firewall Orchestrator version from **8.0** onwards and
-the features it introduced. It is compiled from the revision histories
-([main](revision-history-main.md), [develop](revision-history-develop.md)).
+the features it introduced. It is compiled from the
+[revision history](revision-history.md).
 
 Entries focus on newly introduced features and capabilities; pure bug fixes,
 dependency bumps and Hasura/.NET maintenance upgrades are generally omitted. A
@@ -211,3 +211,29 @@ For a feature-centric, thematically grouped view see
 - Importer/customizing-script HTTP calls now use connect/read timeouts.
 - FortiOS (REST) VIP/destination-NAT objects normalized to their external IP.
 - Explicit `[Authorize]` on the password-change REST endpoint.
+
+### 9.2.0 — 10.07.2026
+- Updated supported operating systems: Ubuntu 22.04/24.04/26.04, Debian 11/12/13, Red Hat 9, and Rocky 9.
+- Ubuntu versions older than 22.04 and Debian versions older than 11 are no longer supported.
+
+### 9.2.1 — 12.07.2026 (DEVELOP)
+- Migrated firewall tables to the firewall schema.
+
+### 9.2.2 — 15.07.2026 (MAIN)
+- Added generic firewall import.
+- Enabled Azure 2022 firewall support for normalized config import.
+
+### 9.2.3 — 17.07.2026 (DEVELOP)
+- Standard rules report generation now scopes flat rule paging to selected rulebases and adds a supporting database index.
+
+### 9.3 — 30.07.2026 (MAIN)
+- New OPNsense standalone (25ff) import module: imports OPNsense firewall configs via the full config.xml core backup API.
+
+### 9.4.5 — 27.08.2026
+- Compliance diff reports can optionally show only rules that newly became non-compliant.
+
+## 9.6.x
+
+### 9.6.1 — 01.10.2026 (DEVELOP)
+- The Rules report can show management rulebases instead of gateways: start rulebases are selected per management, including rulebases without a gateway link, and reported together with the layers and sections following them.
+- Configurable default rules report view (gateway rules or management rulebases), globally and personally. Personal settings override the global gateway-based default; saved report templates retain their view.

@@ -2,6 +2,7 @@ using BlazorTable;
 using FWO.Api.Client;
 using FWO.Config.Api;
 using FWO.Config.File;
+using FWO.Compliance;
 using FWO.Data.Middleware;
 using FWO.Logging;
 using FWO.Middleware.Client;
@@ -9,11 +10,13 @@ using FWO.Services;
 using FWO.Services.EventMediator;
 using FWO.Services.EventMediator.Interfaces;
 using FWO.Services.RuleTreeBuilder;
+using FWO.Services.Workflow;
+using FWO.Services.SystemUsage;
 using FWO.Ui.Auth;
 using FWO.Ui.Services;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server.Circuits;
-using Microsoft.AspNetCore.Session;
+using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 using RestSharp;
 
 
@@ -47,10 +50,10 @@ builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 
 builder.Services.AddScoped<AuthenticationStateProvider, AuthStateProvider>();
-builder.Services.AddScoped<CircuitHandler, CircuitHandlerService>();
 builder.Services.AddScoped<KeyboardInputService, KeyboardInputService>();
 builder.Services.AddScoped<IEventMediator, EventMediator>();
 builder.Services.AddScoped<IRuleTreeBuilder>(_ => new RuleTreeBuilder());
+builder.Services.AddSingleton<IRequestedRulePolicyCheckerFactory, ComplianceRequestedRulePolicyCheckerFactory>();
 
 string ApiUri = ConfigFile.ApiServerUri;
 string MiddlewareUri = ConfigFile.MiddlewareServerUri;
@@ -58,9 +61,18 @@ string ProductVersion = ConfigFile.ProductVersion;
 
 builder.Services.AddScoped<ApiConnection>(_ => new GraphQlApiConnection(ApiUri));
 builder.Services.AddScoped<MiddlewareClient>(_ => new MiddlewareClient(MiddlewareUri));
-builder.Services.AddScoped<ISessionStorage, SessionStorageWrapper>();
+builder.Services.AddScoped<ISessionStorage, SessionStorage>();
 builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<ITokenRefreshCoordinator, TokenRefreshCoordinator>();
+builder.Services.AddSingleton<IPeriodicTaskRunnerFactory, PeriodicTaskRunnerFactory>();
 builder.Services.AddScoped<ExecutionModeStorage>();
+builder.Services.AddSingleton<IInternalCaCertificateProvider, InternalCaCertificateProvider>();
+
+// system usage monitoring: track the open circuits and sample the resource usage of this UI server
+builder.Services.AddSingleton<UiSessionTracker>();
+builder.Services.AddScoped<CircuitHandler, UiSessionCircuitHandler>();
+builder.Services.AddSingleton<ISystemUsageSource, ProcSystemUsageSource>();
+builder.Services.AddSingleton<ISystemUsageCollector, SystemUsageCollector>();
 
 // Create "anonymous" (empty) jwt
 MiddlewareClient middlewareClient = new(MiddlewareUri);
@@ -93,9 +105,15 @@ TokenPair tokenPair = System.Text.Json.JsonSerializer.Deserialize<TokenPair>(cre
 string jwt = tokenPair.AccessToken ?? throw new ArgumentException("Received empty jwt.");
 
 // Get all non-confidential configuration settings and add to a global service (for all users)
-GlobalConfig globalConfig = await GlobalConfig.ConstructAsync(jwt, true, true);
+ApiConnection globalConfigApiConnection = new GraphQlApiConnection(ApiUri, jwt);
+GlobalConfig globalConfig = await GlobalConfig.ConstructAsync(globalConfigApiConnection, true, true, owningApiConnection: true);
 builder.Services.AddSingleton<GlobalConfig>(_ => globalConfig);
 builder.Services.AddSingleton<IUrlSanitizer, UrlSanitizer>();
+builder.Services.AddSingleton(new GlobalConfigApiConnection(globalConfigApiConnection));
+builder.Services.AddSingleton(new GlobalConfigTokenState(tokenPair));
+builder.Services.AddSingleton<IAnonymousGlobalConfigTokenProvider>(_ => new AnonymousGlobalConfigTokenProvider(MiddlewareUri));
+builder.Services.AddSingleton(new TokenRefreshOptions());
+builder.Services.AddHostedService<GlobalConfigTokenRefreshService>();
 
 // the user's personal config
 builder.Services.AddScoped<UserConfig>(_ => UserConfig.ForTextOnly(globalConfig));

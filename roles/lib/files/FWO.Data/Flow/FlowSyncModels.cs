@@ -1,8 +1,24 @@
+using FWO.Data;
 using Newtonsoft.Json;
 using System.Text.Json.Serialization;
 
 namespace FWO.Data.Flow
 {
+    public class SuperMgmToMgmsMapping
+    {
+        [JsonProperty("mgm_id"), JsonPropertyName("mgm_id")]
+        public int SuperMgmId { get; set; }
+
+        [JsonProperty("sub_mgms"), JsonPropertyName("sub_mgms")]
+        public List<SubMgmId> SubMgmIds { get; set; } = new();
+    }
+
+    public class SubMgmId
+    {
+        [JsonProperty("mgm_id"), JsonPropertyName("mgm_id")]
+        public int MgmId { get; set; }
+    }
+
     public class FlowSyncManagementData
     {
         [JsonProperty("mgm_id"), JsonPropertyName("mgm_id")]
@@ -160,6 +176,9 @@ namespace FWO.Data.Flow
         [JsonProperty("removed_date"), JsonPropertyName("removed_date")]
         public DateTime? RemovedDate { get; set; }
 
+        [JsonProperty("allows_traffic"), JsonPropertyName("allows_traffic")]
+        public bool AllowsTraffic { get; set; } = true;
+
         [JsonProperty("access_sources"), JsonPropertyName("access_sources")]
         public FlowAccessInsertMembersContainer? AccessSources { get; set; }
 
@@ -239,6 +258,53 @@ namespace FWO.Data.Flow
         public long TimeObjId { get; set; }
     }
 
+    /// <summary>
+    /// A flow entry whose stored hash does not match the hash calculated from its current state.
+    /// </summary>
+    public class FlowHashInconsistency
+    {
+        private const int kMaxDescribedInconsistencies = 20;
+
+        public string EntryType { get; init; } = "";
+        public long Id { get; init; }
+        public string StoredHash { get; init; } = "";
+
+        /// <summary>
+        /// The hash calculated from the current state, or null when no hash can be calculated for the entry.
+        /// </summary>
+        public string? RecalculatedHash { get; init; }
+
+        /// <inheritdoc />
+        public override string ToString()
+        {
+            return $"{EntryType} id {Id} (stored {StoredHash}, recalculated {RecalculatedHash ?? "none"})";
+        }
+
+        /// <summary>
+        /// Describes the given inconsistencies for a log message. The number of described entries is capped so
+        /// that a flow database with many inconsistent entries does not produce an unreadable log line.
+        /// </summary>
+        public static string Describe(IReadOnlyList<FlowHashInconsistency> inconsistencies)
+        {
+            string description = string.Join("; ", inconsistencies.Take(kMaxDescribedInconsistencies));
+            return inconsistencies.Count > kMaxDescribedInconsistencies
+                ? $"{description}; and {inconsistencies.Count - kMaxDescribedInconsistencies} more"
+                : description;
+        }
+    }
+
+    public class FlowSyncFlowDataInput
+    {
+        public List<FlowNwObject> NwObjects { get; init; } = [];
+        public List<FlowNwGroup> NwGroups { get; init; } = [];
+        public List<FlowSvcObject> SvcObjects { get; init; } = [];
+        public List<FlowSvcGroup> SvcGroups { get; init; } = [];
+        public List<FlowTimeObject> TimeObjects { get; init; } = [];
+        public List<FlowAccess> Accesses { get; init; } = [];
+        public List<IpProtocol>? IpProtocols { get; init; }
+        public List<RuleAction>? RuleActions { get; init; }
+    }
+
     public class FlowSyncFlowData
     {
         public readonly Dictionary<string, FlowNwObject> NwObjects = [];
@@ -251,14 +317,24 @@ namespace FWO.Data.Flow
         public readonly Dictionary<long, FlowNwGroup> NwGroupsById = [];
         public readonly Dictionary<long, FlowSvcObject> SvcObjectsById = [];
         public readonly Dictionary<long, FlowSvcGroup> SvcGroupsById = [];
+        public readonly Dictionary<int, string> ProtocolNamesById = [];
+        public readonly Dictionary<long, FlowTimeObject> TimeObjectsById = [];
+        public readonly Dictionary<int, RuleAction> RuleActionsById = [];
 
         public Dictionary<long, string> NwObjectHashes { get; private set; } = [];
         public Dictionary<long, string> SvcObjectHashes { get; private set; } = [];
         public Dictionary<long, string> TimeObjectHashes { get; private set; } = [];
         public Dictionary<long, string> AccessHashes { get; private set; } = [];
 
-        public FlowSyncFlowData(List<FlowNwObject> nwObjects, List<FlowNwGroup> nwGroups, List<FlowSvcObject> svcObjects, List<FlowSvcGroup> svcGroups, List<FlowTimeObject> timeObjects, List<FlowAccess> accesses)
+        public FlowSyncFlowData(FlowSyncFlowDataInput input)
         {
+            List<FlowNwObject> nwObjects = input.NwObjects;
+            List<FlowNwGroup> nwGroups = input.NwGroups;
+            List<FlowSvcObject> svcObjects = input.SvcObjects;
+            List<FlowSvcGroup> svcGroups = input.SvcGroups;
+            List<FlowTimeObject> timeObjects = input.TimeObjects;
+            List<FlowAccess> accesses = input.Accesses;
+
             NwObjects = nwObjects.ToDictionary(fo => fo.Hash, fo => fo);
             NwGroups = nwGroups.ToDictionary(fg => fg.Hash, fg => fg);
             SvcObjects = svcObjects.ToDictionary(fs => fs.Hash, fs => fs);
@@ -269,6 +345,9 @@ namespace FWO.Data.Flow
             NwGroupsById = nwGroups.ToDictionary(group => group.Id);
             SvcObjectsById = svcObjects.ToDictionary(flowObject => flowObject.Id);
             SvcGroupsById = svcGroups.ToDictionary(group => group.Id);
+            ProtocolNamesById = (input.IpProtocols ?? []).Where(protocol => !string.IsNullOrWhiteSpace(protocol.Name)).ToDictionary(protocol => protocol.Id, protocol => protocol.Name);
+            TimeObjectsById = timeObjects.ToDictionary(timeObject => timeObject.Id);
+            RuleActionsById = (input.RuleActions ?? []).ToDictionary(action => action.Id);
 
             NwObjectHashes = nwObjects.SelectMany(fo => (fo.Objects ?? Enumerable.Empty<NetworkObject>())
                     .Select(o => new { o.Id, ParentHash = fo.Hash }))
@@ -282,6 +361,20 @@ namespace FWO.Data.Flow
             AccessHashes = accesses.SelectMany(fa => (fa.Rules ?? Enumerable.Empty<Rule>())
                     .Select(r => new { r.Id, ParentHash = fa.Hash }))
                 .ToDictionary(x => x.Id, x => x.ParentHash);
+
+            // link group members to actual detailed objects from corresponding object lists
+            nwGroups.ForEach(g => g.NwGroupMembers.ForEach(m => m.NwObject = NwObjectsById[m.NwObjectId]));
+            svcGroups.ForEach(g => g.SvcGroupMembers.ForEach(m => m.SvcObject = SvcObjectsById[m.SvcObjectId]));
+            accesses.ForEach(a =>
+            {
+                a.Sources?.ForEach(s => s.NwObject = NwObjectsById[s.NwObjectId]);
+                a.SourceGroups?.ForEach(sg => sg.NwGroup = NwGroupsById[sg.NwGroupId]);
+                a.Destinations?.ForEach(d => d.NwObject = NwObjectsById[d.NwObjectId]);
+                a.DestinationGroups?.ForEach(dg => dg.NwGroup = NwGroupsById[dg.NwGroupId]);
+                a.Services?.ForEach(s => s.SvcObject = SvcObjectsById[s.SvcObjectId]);
+                a.ServiceGroups?.ForEach(sg => sg.SvcGroup = SvcGroupsById[sg.SvcGroupId]);
+                a.TimeObjects?.ForEach(to => to.TimeObject = TimeObjectsById[to.TimeObjectId]);
+            });
         }
 
         public void Add(FlowNwObject flowObject)
@@ -308,9 +401,56 @@ namespace FWO.Data.Flow
             SvcGroups[group.Hash] = group;
         }
 
+        public void Add(FlowTimeObject timeObject)
+        {
+            TimeObjectsById[timeObject.Id] = timeObject;
+            TimeObjects[timeObject.Hash] = timeObject;
+        }
+
         public void Add(FlowAccess access)
         {
             Accesses[access.Hash] = access;
+        }
+
+        /// <summary>
+        /// Collects the entries whose stored hash differs from the hash calculated from their current state with
+        /// the current hash calculation logic.
+        /// Network objects, service objects and time objects where the hash cannot be calculated automatically
+        /// (manually created flow objects) are excluded from this check. For groups and accesses, all base
+        /// objects contained within the group/access are expected to have valid hashes, so a hash that cannot be
+        /// calculated any more is reported as well.
+        /// </summary>
+        /// <returns>The inconsistent entries with their stored and recalculated hash, empty if there are none.</returns>
+        public List<FlowHashInconsistency> GetHashInconsistencies()
+        {
+            return
+            [
+                .. CollectInconsistencies(FlowEntryType.kNwObject, NwObjects.Values.Select(entry => (entry.Id, entry.Hash, entry.TryCalculateHash())), false),
+                .. CollectInconsistencies(FlowEntryType.kSvcObject, SvcObjects.Values.Select(entry => (entry.Id, entry.Hash, entry.TryCalculateHash())), false),
+                .. CollectInconsistencies(FlowEntryType.kTimeObject, TimeObjects.Values.Select(entry => (entry.Id, entry.Hash, entry.TryCalculateHash())), false),
+                .. CollectInconsistencies(FlowEntryType.kNwGroup, NwGroups.Values.Select(entry => (entry.Id, entry.Hash, entry.TryCalculateHash())), true),
+                .. CollectInconsistencies(FlowEntryType.kSvcGroup, SvcGroups.Values.Select(entry => (entry.Id, entry.Hash, entry.TryCalculateHash())), true),
+                .. CollectInconsistencies(FlowEntryType.kAccess, Accesses.Values.Select(entry => (entry.Id, entry.Hash, entry.TryCalculateHash())), true)
+            ];
+        }
+
+        /// <summary>
+        /// Selects the entries of one flow entry type whose stored hash no longer matches their recalculated hash.
+        /// Entries without a recalculated hash are only reported when the entry type is expected to always have one.
+        /// </summary>
+        private static IEnumerable<FlowHashInconsistency> CollectInconsistencies(string entryType,
+            IEnumerable<(long Id, string StoredHash, string? RecalculatedHash)> entries, bool reportEntriesWithoutRecalculatedHash)
+        {
+            return entries
+                .Where(entry => (entry.RecalculatedHash != null || reportEntriesWithoutRecalculatedHash)
+                    && entry.RecalculatedHash != entry.StoredHash)
+                .Select(entry => new FlowHashInconsistency
+                {
+                    EntryType = entryType,
+                    Id = entry.Id,
+                    StoredHash = entry.StoredHash,
+                    RecalculatedHash = entry.RecalculatedHash
+                });
         }
     }
 }

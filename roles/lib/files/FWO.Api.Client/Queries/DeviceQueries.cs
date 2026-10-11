@@ -5,6 +5,7 @@ namespace FWO.Api.Client.Queries
     public class DeviceQueries : Queries
     {
         public static readonly string getDevicesByManagement;
+        public static readonly string getManagementsForRulebaseReporting;
         public static readonly string getDevicesByManagementOrSuperMgm;
         public static readonly string getManagementNames;
         public static readonly string getManagementsDetails;
@@ -30,13 +31,18 @@ namespace FWO.Api.Client.Queries
         public static readonly string newCredential;
         public static readonly string updateCredential;
         public static readonly string deleteCredential;
-        public static readonly string getMgmtNumberUsingCred;
+        public static readonly string getManagementsUsingCredential;
+        public static readonly string getUsedMgmDeviceTypes;
+        public static readonly string getManagementById;
+        public static readonly string getMgmIdsBySuperMgmId;
+
 
         static DeviceQueries()
         {
             try
             {
                 getDevicesByManagement = GetQueryText("device/getDevicesByManagement.graphql");
+                getManagementsForRulebaseReporting = GetQueryText("device/getManagementsForRulebaseReporting.graphql");
                 getDevicesByManagementOrSuperMgm = GetQueryText("device/getDevicesByManagementOrSuperMgm.graphql");
                 getManagementNames = GetQueryText("device/getManagementNames.graphql");
                 getManagementsDetails = GetQueryText("device/getManagementsDetails.graphql")
@@ -75,7 +81,14 @@ namespace FWO.Api.Client.Queries
                 newCredential = GetQueryText("device/newCredential.graphql");
                 updateCredential = GetQueryText("device/updateCredential.graphql");
                 deleteCredential = GetQueryText("device/deleteCredential.graphql");
-                getMgmtNumberUsingCred = GetQueryText("device/getMgmtNumberUsingCred.graphql");
+                getManagementsUsingCredential = GetQueryText("device/getManagementsUsingCredential.graphql");
+                getUsedMgmDeviceTypes = GetQueryText("device/getUsedMgmDeviceTypes.graphql");
+                getManagementById = GetQueryText("device/getManagementById.graphql")
+                    + GetQueryText("device/fragments/subManagements.graphql")
+                    + GetQueryText("device/fragments/managementDetails.graphql")
+                    + GetQueryText("device/fragments/deviceTypeDetails.graphql")
+                    + GetQueryText("device/fragments/importCredentials.graphql");
+                getMgmIdsBySuperMgmId = GetQueryText("device/getMgmIdsBySuperMgmId.graphql");
             }
             catch (Exception exception)
             {

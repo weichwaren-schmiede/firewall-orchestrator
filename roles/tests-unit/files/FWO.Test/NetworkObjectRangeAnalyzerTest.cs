@@ -28,7 +28,7 @@ namespace FWO.Test
         [Test]
         public void Analyze_ShouldReturnSubnetPrefixForIpv4Range()
         {
-            NetworkObject networkObject = CreateNetworkObject("Subnet", "10.1.0.0/24", "10.1.255.255/24");
+            NetworkObject networkObject = CreateNetworkObject("Subnet", "10.1.0.0/32", "10.1.255.255/32");
 
             NetworkObjectRangeAnalysis analysis = _analyzer.Analyze(networkObject);
 
@@ -49,31 +49,95 @@ namespace FWO.Test
         }
 
         [Test]
-        public void MatchesIpFilter_ShouldIgnoreObjectsBelowPrefixThresholdAndKeepSearching()
+        public void EvaluateIpFilter_ShouldReturnPrefixViolationWhenAnyObjectIsTooBroad()
         {
             List<NetworkObject> objects =
             [
-                CreateNetworkObject("Broad", "10.0.0.0/8", "10.255.255.255/8"),
+                CreateNetworkObject("Broad", "10.0.0.0/32", "10.255.255.255/32"),
                 CreateNetworkObject("Host", "10.1.2.3/32", "10.1.2.3/32")
             ];
 
-            bool matches = _analyzer.MatchesIpFilter(IPAddress.Parse("10.1.2.3"), 24, objects);
+            IpFilterEvaluation evaluation = _analyzer.EvaluateIpFilter(
+                IPAddress.Parse("10.1.2.3"), 24, objects);
 
-            ClassicAssert.IsTrue(matches);
+            ClassicAssert.AreEqual(IpFilterEvaluation.PrefixViolation, evaluation);
         }
 
         [Test]
-        public void ExceedsPrefixThreshold_ShouldFlagWhenAnyObjectIsBroaderThanThreshold()
+        public void EvaluateIpFilter_ShouldReturnMatchWhenEveryObjectMeetsThresholdAndAnyContainsIp()
+        {
+            List<NetworkObject> objects =
+            [
+                CreateNetworkObject("Subnet", "10.1.2.0/32", "10.1.2.255/32"),
+                CreateNetworkObject("Host", "10.1.2.3/32", "10.1.2.3/32")
+            ];
+
+            IpFilterEvaluation evaluation = _analyzer.EvaluateIpFilter(
+                IPAddress.Parse("10.1.2.3"), 24, objects);
+
+            ClassicAssert.AreEqual(IpFilterEvaluation.Match, evaluation);
+        }
+
+        [Test]
+        public void EvaluateIpFilter_ShouldIgnoreUnsupportedObjectsWhenAnyIpv4ObjectMatches()
+        {
+            List<NetworkObject> objects =
+            [
+                CreateNetworkObject("Ipv6", "2001:db8::/64", "2001:db8::ffff/64"),
+                CreateNetworkObject("Host", "10.1.2.3/32", "10.1.2.3/32")
+            ];
+
+            IpFilterEvaluation evaluation = _analyzer.EvaluateIpFilter(
+                IPAddress.Parse("10.1.2.3"), 24, objects);
+
+            ClassicAssert.AreEqual(IpFilterEvaluation.Match, evaluation);
+        }
+
+        [Test]
+        public void EvaluateIpFilter_ShouldReturnNoMatchWhenNoObjectContainsIp()
+        {
+            List<NetworkObject> objects =
+            [
+                CreateNetworkObject("OtherSubnet", "192.168.1.0/32", "192.168.1.255/32"),
+                CreateNetworkObject("OtherHost", "192.168.1.1/32", "192.168.1.1/32")
+            ];
+
+            IpFilterEvaluation evaluation = _analyzer.EvaluateIpFilter(
+                IPAddress.Parse("10.1.2.3"), 24, objects);
+
+            ClassicAssert.AreEqual(IpFilterEvaluation.NoIpMatch, evaluation);
+        }
+
+        [Test]
+        public void EvaluateIpFilter_ShouldReturnNoMatchWhenNoResolvableObjectsArePresent()
+        {
+            List<NetworkObject> objects =
+            [
+                new()
+                {
+                    Name = "EmptyGroup",
+                    Type = new NetworkObjectType { Name = ObjectType.Group }
+                }
+            ];
+
+            IpFilterEvaluation evaluation = _analyzer.EvaluateIpFilter(
+                IPAddress.Parse("10.1.2.3"), 24, objects);
+
+            ClassicAssert.AreEqual(IpFilterEvaluation.NoIpMatch, evaluation);
+        }
+
+        [Test]
+        public void MeetsMinimumPrefix_ShouldRejectWhenAnyObjectIsBroaderThanThreshold()
         {
             List<NetworkObject> objects =
             [
                 CreateNetworkObject("Host", "10.1.2.3/32", "10.1.2.3/32"),
-                CreateNetworkObject("Broad", "10.0.0.0/8", "10.255.255.255/8")
+                CreateNetworkObject("Broad", "10.0.0.0/32", "10.255.255.255/32")
             ];
 
-            bool exceedsThreshold = _analyzer.ExceedsPrefixThreshold(24, objects);
+            bool meetsMinimumPrefix = _analyzer.MeetsMinimumPrefix(24, objects);
 
-            ClassicAssert.IsTrue(exceedsThreshold);
+            ClassicAssert.IsFalse(meetsMinimumPrefix);
         }
 
         private static NetworkObject CreateNetworkObject(string name, string ip, string ipEnd)

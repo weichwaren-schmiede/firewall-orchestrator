@@ -16,8 +16,10 @@ fragment ticketDetails on request_ticket {
   reason
   external_ticket_id
   external_ticket_source
+  pre_workflow_ticket_reference
   ticket_deadline
   ticket_priority
+  locked
   reqtasks: reqtasks (order_by: { task_number: asc }){
     ...reqTaskDetails
   }

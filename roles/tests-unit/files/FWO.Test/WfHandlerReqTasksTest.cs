@@ -50,6 +50,12 @@ namespace FWO.Test
 
             handler.SetReqTaskPopUpOpt(ObjAction.displayPathAnalysis);
             Assert.That(handler.DisplayPathAnalysisMode, Is.True);
+
+            handler.SetReqTaskPopUpOpt(ObjAction.displayDelete);
+            Assert.That(handler.DisplayDeleteReqTaskMode, Is.True);
+
+            handler.SetReqTaskPopUpOpt(ObjAction.displayComment);
+            Assert.That(handler.DisplayReqTaskCommentMode, Is.True);
         }
 
         [Test]
@@ -105,6 +111,25 @@ namespace FWO.Test
                 Assert.That(handler.DisplayReqTaskMode, Is.True);
                 Assert.That(handler.ApproveReqTaskMode, Is.True);
                 Assert.That(handler.EditReqTaskMode, Is.False);
+            });
+        }
+
+        [Test]
+        public void SelectReqTask_AddBindsNewTaskToCurrentTicket()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            SetMatrix(handler, taskType);
+            handler.ActTicket = new WfTicket { Id = 7 };
+            WfReqTask reqTask = new() { Id = 11, TicketId = 0, TaskType = taskType };
+
+            handler.SelectReqTask(reqTask, ObjAction.add);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(handler.ActReqTask.TicketId, Is.EqualTo(7));
+                Assert.That(handler.ActTicket, Is.Not.Null);
+                Assert.That(handler.AddReqTaskMode, Is.True);
             });
         }
 
@@ -178,6 +203,43 @@ namespace FWO.Test
                 Assert.That(missingTask, Is.False);
                 Assert.That(missingTicket, Is.False);
             });
+        }
+
+        [Test]
+        public async Task ReloadActReqTask_RefreshesTicketAndTask()
+        {
+            string taskType = WfTaskType.access.ToString();
+            WfReqTask refreshedTask = new() { Id = 11, TicketId = 7, TaskType = taskType };
+            WfTicket refreshedTicket = new() { Id = 7, Tasks = { refreshedTask } };
+            WfHandler handler = CreateReloadHandler(refreshedTicket);
+            SetMatrix(handler, taskType);
+            handler.ActReqTask = new WfReqTask { Id = 11, TicketId = 7, TaskType = taskType };
+            handler.TicketList.Add(new WfTicket { Id = 7, Tasks = { new WfReqTask { Id = 11, TicketId = 7, TaskType = taskType } } });
+
+            bool reloaded = await handler.ReloadActReqTask();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reloaded, Is.True);
+                Assert.That(handler.ActTicket, Is.SameAs(refreshedTicket));
+                Assert.That(handler.ActReqTask, Is.Not.SameAs(refreshedTask));
+                Assert.That(handler.ActReqTask.Id, Is.EqualTo(11));
+                Assert.That(handler.TicketList[0], Is.SameAs(refreshedTicket));
+            });
+        }
+
+        [Test]
+        public async Task ReloadActReqTask_ReturnsFalseWhenReloadedTaskCannotBeActivated()
+        {
+            string taskType = WfTaskType.access.ToString();
+            WfReqTask refreshedTask = new() { Id = 11, TicketId = 7, TaskType = taskType };
+            WfTicket refreshedTicket = new() { Id = 7, Tasks = { refreshedTask } };
+            WfHandler handler = CreateReloadHandler(refreshedTicket);
+            handler.ActReqTask = new WfReqTask { Id = 11, TicketId = 7, TaskType = taskType };
+
+            bool reloaded = await handler.ReloadActReqTask();
+
+            Assert.That(reloaded, Is.False);
         }
 
         [Test]
@@ -267,6 +329,108 @@ namespace FWO.Test
         }
 
         [Test]
+        public void TrySetReqTaskEnv_ReturnsFalseWhenTicketCannotBeResolved()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            SetMatrix(handler, taskType);
+            WfReqTask reqTask = new() { Id = 11, TicketId = 7, TaskType = taskType };
+
+            bool found = handler.TrySetReqTaskEnv(reqTask);
+
+            Assert.That(found, Is.False);
+        }
+
+        [Test]
+        public void TrySetReqTaskEnv_UsesUnsavedCurrentTicketWhenRequestTaskHasNoTicketId()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            SetMatrix(handler, taskType);
+            WfReqTask reqTask = new() { Id = 11, TicketId = 0, TaskType = taskType };
+            handler.ActTicket = new WfTicket { Id = 0 };
+            handler.AddTicketMode = true;
+
+            bool found = handler.TrySetReqTaskEnv(reqTask);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(found, Is.True);
+                Assert.That(handler.ActTicket, Is.Not.Null);
+                Assert.That(handler.ActReqTask.Id, Is.EqualTo(11));
+            });
+        }
+
+        [Test]
+        public void TrySetReqTaskEnv_ReturnsFalseWhenZeroTicketIdUsesDefaultPlaceholderTicket()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            SetMatrix(handler, taskType);
+            WfReqTask reqTask = new() { Id = 11, TicketId = 0, TaskType = taskType };
+            handler.ActTicket = new WfTicket { Id = 0 };
+
+            bool found = handler.TrySetReqTaskEnv(reqTask);
+
+            Assert.That(found, Is.False);
+        }
+
+        [Test]
+        public void SetReqTaskEnv_ThrowsWhenTicketCannotBeResolved()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            SetMatrix(handler, taskType);
+            WfReqTask reqTask = new() { Id = 11, TicketId = 7, TaskType = taskType };
+
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => handler.SetReqTaskEnv(reqTask))!;
+
+            Assert.That(exception.Message, Does.Contain("Could not resolve ticket 7"));
+        }
+
+        [Test]
+        public void SetReqTaskEnv_UsesCurrentTicketWhenRequestTaskHasNoTicketId()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            StateMatrix matrix = new();
+            SetMatrix(handler, taskType, matrix);
+            WfReqTask reqTask = new() { Id = 11, TaskType = taskType };
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            handler.ActTicket = ticket;
+
+            handler.SetReqTaskEnv(reqTask);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(handler.ActTicket, Is.SameAs(ticket));
+                Assert.That(handler.ActReqTask.Id, Is.EqualTo(11));
+                Assert.That(handler.ActStateMatrix, Is.SameAs(matrix));
+            });
+        }
+
+        [Test]
+        public void SetReqTaskEnv_UsesCurrentTicketWhenItMatchesTheTicketId()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            StateMatrix matrix = new();
+            SetMatrix(handler, taskType, matrix);
+            WfReqTask reqTask = new() { Id = 11, TicketId = 7, TaskType = taskType };
+            WfTicket ticket = new() { Id = 7, Tasks = { reqTask } };
+            handler.ActTicket = ticket;
+
+            handler.SetReqTaskEnv(reqTask);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(handler.ActTicket, Is.SameAs(ticket));
+                Assert.That(handler.ActReqTask.Id, Is.EqualTo(11));
+                Assert.That(handler.ActStateMatrix, Is.SameAs(matrix));
+            });
+        }
+
+        [Test]
         public async Task AddReqTask_ExistingTicketAssignsTicketAndAddsTask()
         {
             WfHandler handler = new();
@@ -301,6 +465,18 @@ namespace FWO.Test
         }
 
         [Test]
+        public async Task AddReqTask_LockedTicketDoesNotAddTask()
+        {
+            WfHandler handler = new();
+            handler.ActTicket = new WfTicket { Id = 7, Locked = true };
+            handler.ActReqTask = new WfReqTask { TaskNumber = 1, TaskType = WfTaskType.access.ToString() };
+
+            await handler.AddReqTask();
+
+            Assert.That(handler.ActTicket.Tasks, Is.Empty);
+        }
+
+        [Test]
         public async Task ChangeReqTask_ReplacesTaskByTaskNumber()
         {
             WfHandler handler = new();
@@ -319,6 +495,19 @@ namespace FWO.Test
         }
 
         [Test]
+        public async Task ChangeReqTask_LockedTaskDoesNotReplaceTask()
+        {
+            WfHandler handler = new();
+            WfReqTask oldTask = new() { Id = 11, TaskNumber = 2, Title = "Old" };
+            handler.ActTicket = new WfTicket { Tasks = { oldTask } };
+            handler.ActReqTask = new WfReqTask { Id = 11, TaskNumber = 2, Title = "New", Locked = true };
+
+            await handler.ChangeReqTask();
+
+            Assert.That(handler.ActTicket.Tasks[0], Is.SameAs(oldTask));
+        }
+
+        [Test]
         public async Task ChangeOwner_ReplacesTaskByTaskNumber()
         {
             WfHandler handler = new();
@@ -334,6 +523,25 @@ namespace FWO.Test
                 Assert.That(handler.ActTicket.Tasks[0], Is.SameAs(handler.ActReqTask));
                 Assert.That(handler.ActTicket.Tasks[0].Owners[0].Owner.Id, Is.EqualTo(2));
             });
+        }
+
+        [Test]
+        public async Task ChangeOwner_LockedTaskDoesNotReplaceTask()
+        {
+            WfHandler handler = new();
+            WfReqTask oldTask = new() { Id = 11, TaskNumber = 2, Owners = [new FwoOwnerDataHelper { Owner = new FwoOwner { Id = 1 } }] };
+            handler.ActTicket = new WfTicket { Tasks = { oldTask } };
+            handler.ActReqTask = new WfReqTask
+            {
+                Id = 11,
+                TaskNumber = 2,
+                Locked = true,
+                Owners = [new FwoOwnerDataHelper { Owner = new FwoOwner { Id = 2 } }]
+            };
+
+            await handler.ChangeOwner();
+
+            Assert.That(handler.ActTicket.Tasks[0], Is.SameAs(oldTask));
         }
 
         [Test]
@@ -485,6 +693,24 @@ namespace FWO.Test
         }
 
         [Test]
+        public async Task ConfDeleteReqTask_LockedTicketKeepsTaskAndClearsFlag()
+        {
+            WfHandler handler = new();
+            WfReqTask reqTask = new() { Id = 11 };
+            handler.ActTicket = new WfTicket { Locked = true, Tasks = { reqTask } };
+            handler.ActReqTask = reqTask;
+            handler.DisplayDeleteReqTaskMode = true;
+
+            await handler.ConfDeleteReqTask();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(handler.ActTicket.Tasks, Has.Count.EqualTo(1));
+                Assert.That(handler.DisplayDeleteReqTaskMode, Is.False);
+            });
+        }
+
+        [Test]
         public async Task ConfAddCommentToReqTask_AddsCommentAndClearsFlag()
         {
             WfHandler handler = new();
@@ -588,6 +814,22 @@ namespace FWO.Test
         }
 
         [Test]
+        public void CanActOnReqTaskInCurrentPhase_OnlyAllowsStatesWithinPhaseBounds()
+        {
+            WfHandler handler = new();
+            string taskType = WfTaskType.access.ToString();
+            SetMatrix(handler, taskType, new StateMatrix { LowestInputState = 10, LowestEndState = 20 });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(handler.CanActOnReqTaskInCurrentPhase(new WfReqTask { TaskType = taskType, StateId = 9 }), Is.False);
+                Assert.That(handler.CanActOnReqTaskInCurrentPhase(new WfReqTask { TaskType = taskType, StateId = 10 }), Is.True);
+                Assert.That(handler.CanActOnReqTaskInCurrentPhase(new WfReqTask { TaskType = taskType, StateId = 19 }), Is.True);
+                Assert.That(handler.CanActOnReqTaskInCurrentPhase(new WfReqTask { TaskType = taskType, StateId = 20 }), Is.False);
+            });
+        }
+
+        [Test]
         public async Task HandlePathAnalysisAction_DisplayFoundDevicesShowsPathAnalysisPopup()
         {
             WfHandler handler = new();
@@ -617,6 +859,43 @@ namespace FWO.Test
             await handler.HandlePathAnalysisAction("{");
 
             Assert.That(handler.DisplayPathAnalysisMode, Is.False);
+        }
+
+        private static WfHandler CreateReloadHandler(WfTicket refreshedTicket)
+        {
+            ReloadApiConnection apiConnection = new(refreshedTicket);
+            WfHandler handler = new();
+            handler.userConfig.ReqOwnerBased = false;
+            WfDbAccess dbAccess = new((_, _, _, _) => { }, handler.userConfig, apiConnection, null!, true, WorkflowPhases.request);
+            SetPrivateField(handler, "dbAcc", dbAccess);
+            return handler;
+        }
+
+        private static void SetPrivateField<T>(WfHandler handler, string fieldName, T value)
+        {
+            FieldInfo field = typeof(WfHandler).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException($"Field '{fieldName}' not found.");
+            field.SetValue(handler, value);
+        }
+
+        private sealed class ReloadApiConnection : SimulatedApiConnection
+        {
+            private readonly WfTicket refreshedTicket;
+
+            public ReloadApiConnection(WfTicket refreshedTicket)
+            {
+                this.refreshedTicket = refreshedTicket;
+            }
+
+            public override Task<QueryResponseType> SendQueryAsync<QueryResponseType>(string query, object? variables = null, string? operationName = null, FWO.Api.Client.QueryChunkingOptions? chunkingOptions = null)
+            {
+                if (typeof(QueryResponseType) == typeof(WfTicket))
+                {
+                    return Task.FromResult((QueryResponseType)(object)refreshedTicket);
+                }
+
+                throw new NotSupportedException($"Unexpected query type {typeof(QueryResponseType).Name}.");
+            }
         }
     }
 }

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from copy import deepcopy
 from typing import Any
 
 import fwo_const
@@ -70,6 +73,23 @@ class Uid2IdMapper:
         self.timeobj_uid2id = Uid2IdMap()
         self.rule_uid2id = Uid2IdMap()
         self.rulebase_uid2id = Uid2IdMap()
+
+    def clone(self) -> Uid2IdMapper:
+        """
+        Returns a mapper with copies of all mappings that shares this mapper's FwoApi.
+
+        Deep-copying the whole mapper would also copy the FwoApi, so a JWT refresh on the copy
+        would rotate the refresh token without the shared FwoApi ever seeing the new one.
+        """
+        mapper = Uid2IdMapper(self.fwo_api)
+        mapper.nwobj_uid2id = deepcopy(self.nwobj_uid2id)
+        mapper.svc_uid2id = deepcopy(self.svc_uid2id)
+        mapper.user_uid2id = deepcopy(self.user_uid2id)
+        mapper.zone_name2id = deepcopy(self.zone_name2id)
+        mapper.timeobj_uid2id = deepcopy(self.timeobj_uid2id)
+        mapper.rule_uid2id = deepcopy(self.rule_uid2id)
+        mapper.rulebase_uid2id = deepcopy(self.rulebase_uid2id)
+        return mapper
 
     def get_network_object_id(self, uid: str, before_update: bool = False, local_only: bool = False) -> int:
         """
@@ -328,10 +348,10 @@ class Uid2IdMapper:
             if "errors" in response:
                 raise FwoImporterError(f"Error updating network object mapping: {response['errors']}")
             self.nwobj_uid2id.update(
-                {obj["obj_uid"]: obj["obj_id"] for obj in response["data"]["object"]},
+                {obj["obj_uid"]: obj["obj_id"] for obj in response["data"]["firewall_nw_object"]},
                 is_global,
             )
-            FWOLogger.debug(f"Network object mapping updated for {len(response['data']['object'])} objects")
+            FWOLogger.debug(f"Network object mapping updated for {len(response['data']['firewall_nw_object'])} objects")
         except Exception as e:
             raise FwoImporterError(f"Error updating network object mapping: {e}")
 
@@ -360,10 +380,12 @@ class Uid2IdMapper:
             if "errors" in response:
                 raise FwoImporterError(f"Error updating service object mapping: {response['errors']}")
             self.svc_uid2id.update(
-                {obj["svc_uid"]: obj["svc_id"] for obj in response["data"]["service"]},
+                {obj["svc_uid"]: obj["svc_id"] for obj in response["data"]["firewall_nw_service"]},
                 is_global,
             )
-            FWOLogger.debug(f"Service object mapping updated for {len(response['data']['service'])} objects")
+            FWOLogger.debug(
+                f"Service object mapping updated for {len(response['data']['firewall_nw_service'])} objects"
+            )
         except Exception as e:
             raise FwoImporterError(f"Error updating service object mapping: {e}")
 
@@ -390,10 +412,10 @@ class Uid2IdMapper:
             if "errors" in response:
                 raise FwoImporterError(f"Error updating user mapping: {response['errors']}")
             self.user_uid2id.update(
-                {obj["user_uid"]: obj["user_id"] for obj in response["data"]["usr"]},
+                {obj["user_uid"]: obj["user_id"] for obj in response["data"]["firewall_nw_user"]},
                 is_global,
             )
-            FWOLogger.debug(f"User mapping updated for {len(response['data']['usr'])} objects")
+            FWOLogger.debug(f"User mapping updated for {len(response['data']['firewall_nw_user'])} objects")
         except Exception as e:
             raise FwoImporterError(f"Error updating user mapping: {e}")
 
@@ -420,10 +442,10 @@ class Uid2IdMapper:
             if "errors" in response:
                 raise FwoImporterError(f"Error updating zone mapping: {response['errors']}")
             self.zone_name2id.update(
-                {obj["zone_name"]: obj["zone_id"] for obj in response["data"]["zone"]},
+                {obj["zone_name"]: obj["zone_id"] for obj in response["data"]["firewall_zone"]},
                 is_global,
             )
-            FWOLogger.debug(f"Zone mapping updated for {len(response['data']['zone'])} objects")
+            FWOLogger.debug(f"Zone mapping updated for {len(response['data']['firewall_zone'])} objects")
         except Exception as e:
             raise FwoImporterError(f"Error updating zone mapping: {e}")
 
@@ -479,8 +501,8 @@ class Uid2IdMapper:
             response = self.fwo_api.call(query, variables)
             if "errors" in response:
                 raise FwoImporterError(f"Error updating rule mapping: {response['errors']}")
-            self.rule_uid2id.update({obj["rule_uid"]: obj["rule_id"] for obj in response["data"]["rule"]})
-            FWOLogger.debug(f"Rule mapping updated for {len(response['data']['rule'])} objects")
+            self.rule_uid2id.update({obj["rule_uid"]: obj["rule_id"] for obj in response["data"]["firewall_rule"]})
+            FWOLogger.debug(f"Rule mapping updated for {len(response['data']['firewall_rule'])} objects")
         except Exception as e:
             raise FwoImporterError(f"Error updating rule mapping: {e}")
 
@@ -506,7 +528,7 @@ class Uid2IdMapper:
             response = self.fwo_api.call(query, variables)
             if "errors" in response:
                 raise FwoImporterError(f"Error updating rulebase mapping: {response['errors']}")
-            self.rulebase_uid2id.update({obj["uid"]: obj["id"] for obj in response["data"]["rulebase"]})
-            FWOLogger.debug(f"Rulebase mapping updated for {len(response['data']['rulebase'])} objects")
+            self.rulebase_uid2id.update({obj["uid"]: obj["id"] for obj in response["data"]["firewall_rulebase"]})
+            FWOLogger.debug(f"Rulebase mapping updated for {len(response['data']['firewall_rulebase'])} objects")
         except Exception as e:
             raise FwoImporterError(f"Error updating rulebase mapping: {e}")

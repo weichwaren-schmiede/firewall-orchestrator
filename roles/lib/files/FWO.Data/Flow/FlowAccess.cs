@@ -23,6 +23,9 @@ namespace FWO.Data.Flow
         [JsonProperty("removed_date"), JsonPropertyName("removed_date")]
         public DateTime? RemovedDate { get; set; }
 
+        [JsonProperty("allows_traffic"), JsonPropertyName("allows_traffic")]
+        public bool AllowsTraffic { get; set; } = true;
+
         [JsonProperty("access_sources"), JsonPropertyName("access_sources")]
         public List<FlowAccessSource>? Sources { get; set; }
 
@@ -46,6 +49,48 @@ namespace FWO.Data.Flow
 
         [JsonProperty("rules"), JsonPropertyName("rules")]
         public List<Rule>? Rules { get; set; }
+
+        public string? TryCalculateHash()
+        {
+            // Attempt to generate deterministic hash based on member objects' hashes
+            List<string> sourceHashes = Sources?.Select(s => s.NwObject.Hash).ToList() ?? [];
+            List<string> destinationHashes = Destinations?.Select(d => d.NwObject.Hash).ToList() ?? [];
+            List<string> serviceHashes = Services?.Select(s => s.SvcObject.Hash).ToList() ?? [];
+            List<string> timeObjectHashes = TimeObjects?.Select(t => t.TimeObject.Hash).ToList() ?? [];
+
+            return TryCalculateAccessHash(sourceHashes, destinationHashes, serviceHashes, timeObjectHashes);
+        }
+
+        /// <summary>
+        /// Calculates the access hash from the given member hashes instead of the members' stored hashes.
+        /// Used when member hashes have been recalculated but are not yet written back to the database.
+        /// </summary>
+        public string? TryCalculateHash(FlowBaseObjectHashes baseObjectHashes)
+        {
+            List<string> sourceHashes = Sources?.Select(s => baseObjectHashes.NwObjects.GetValueOrDefault(s.NwObjectId, s.NwObject.Hash)).ToList() ?? [];
+            List<string> destinationHashes = Destinations?.Select(d => baseObjectHashes.NwObjects.GetValueOrDefault(d.NwObjectId, d.NwObject.Hash)).ToList() ?? [];
+            List<string> serviceHashes = Services?.Select(s => baseObjectHashes.SvcObjects.GetValueOrDefault(s.SvcObjectId, s.SvcObject.Hash)).ToList() ?? [];
+            List<string> timeObjectHashes = TimeObjects?.Select(t => baseObjectHashes.TimeObjects.GetValueOrDefault(t.TimeObjectId, t.TimeObject.Hash)).ToList() ?? [];
+
+            return TryCalculateAccessHash(sourceHashes, destinationHashes, serviceHashes, timeObjectHashes);
+        }
+
+        private string? TryCalculateAccessHash(
+            List<string> sourceHashes,
+            List<string> destinationHashes,
+            List<string> serviceHashes,
+            List<string> timeObjectHashes)
+        {
+            try
+            {
+                return FlowHashGenerator.GenerateAccessHash(sourceHashes, destinationHashes, serviceHashes, timeObjectHashes, AllowsTraffic);
+            }
+            catch (ArgumentException)
+            {
+                // Cannot generate deterministic hash for this access (missing src/dst/svc or hashes within them)
+                return null;
+            }
+        }
     }
 
     public class FlowAccessInsertResult

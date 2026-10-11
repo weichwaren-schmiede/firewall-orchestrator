@@ -17,10 +17,9 @@ namespace FWO.Services
         {
         }
 
-        public override async Task<bool> RunAsync(UpdateRuleOwnerMappingEventArgs? eventArgs = null)
+        public override async Task<bool> RunAsync(UpdateRuleOwnerMappingEventArgs? eventArgs = null, CancellationToken cancellationToken = default)
         {
-            bool isFullReInitialize = eventArgs?.isFullReInitialize ?? false;
-            return await UpdateRuleOwners(RunFullReinitialize, RunIncremental, isFullReInitialize);
+            return await UpdateRuleOwners(RunFullReinitialize, () => RunIncremental(cancellationToken), eventArgs, cancellationToken);
         }
 
         /// <summary>
@@ -33,7 +32,7 @@ namespace FWO.Services
         /// <summary>
         /// Delegates incremental processing of pending imports to the shared base implementation for CustomField mapping.
         /// </summary>
-        private async Task<bool> RunIncremental() => await RunIncremental(ProcessIncrementalImportCustomField, RunFullReinitialize);
+        private async Task<bool> RunIncremental(CancellationToken cancellationToken) => await RunIncremental(ProcessIncrementalImportCustomField, RunFullReinitialize, cancellationToken);
 
         /// <summary>
         /// Delegates one incremental import to the shared base implementation using CustomField-specific loaders and mapper.
@@ -78,13 +77,14 @@ namespace FWO.Services
             var ownerNameToIdMap = ownersToMap.Where(o => !string.IsNullOrWhiteSpace(o.ExtAppId))
                                               .ToDictionary(o => o.ExtAppId!, o => o.Id);
             var newRuleOwners = new List<RuleOwner>();
+            List<string> ownerKeys = CustomFieldResolver.NormalizeCustomFieldKeys(globalConfig.CustomFieldOwnerKey);
 
             // iterate through rules and create new mappings based on CustomFields
             foreach (Rule rule in rulesToMap)
             {
                 try
                 {
-                    var customFieldValue = CustomFieldResolver.ExtractCustomFieldValue<string>(rule, globalConfig.CustomFieldOwnerKey, out _);
+                    var customFieldValue = CustomFieldResolver.ExtractCustomFieldValue<string>(rule, ownerKeys, out _);
 
                     if (!string.IsNullOrWhiteSpace(customFieldValue) && ownerNameToIdMap.TryGetValue(customFieldValue, out var ownerId))
                     {
@@ -99,7 +99,7 @@ namespace FWO.Services
                 }
                 catch (Exception ex)
                 {
-                    Log.WriteWarning(LogMessageTitle, $"Rule {rule.Id} has invalid CustomFields: {ex.Message}");
+                    MappingLog.Warning($"Rule {rule.Id} has invalid CustomFields: {ex.Message}");
                 }
             }
             return newRuleOwners;

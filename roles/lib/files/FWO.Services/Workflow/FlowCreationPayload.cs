@@ -20,6 +20,9 @@ namespace FWO.Services.Workflow
             ManagementId = payload.ManagementId;
             BundleId = payload.BundleId;
             GroupName = payload.GroupName;
+            TimeStart = payload.TimeStart;
+            TimeEnd = payload.TimeEnd;
+            TimeName = payload.TimeName;
             OriginRequestTaskIds = [.. payload.OriginRequestTaskIds];
             Sources = [.. payload.Sources];
             Destinations = [.. payload.Destinations];
@@ -34,10 +37,24 @@ namespace FWO.Services.Workflow
         public int? ManagementId { get; set; }
         public string BundleId { get; set; } = "";
         public string GroupName { get; set; } = "";
+        public DateTime? TimeStart { get; set; }
+        public DateTime? TimeEnd { get; set; }
+        public string TimeName { get; set; } = "";
         public List<long> OriginRequestTaskIds { get; set; } = [];
         public List<FlowObjectSnapshot> Sources { get; set; } = [];
         public List<FlowObjectSnapshot> Destinations { get; set; } = [];
         public List<FlowServiceSnapshot> Services { get; set; } = [];
+    }
+
+    /// <summary>
+    /// A request element the flow creation refused because of its own content, with the text key naming the
+    /// reason and the value it was refused for. The flow creation runs without a user configuration, so the
+    /// key is resolved by the caller that has one.
+    /// </summary>
+    public class FlowCreationRefusal
+    {
+        public string ReasonTextKey { get; set; } = "";
+        public string RefusedValue { get; set; } = "";
     }
 
     public class FlowObjectSnapshot

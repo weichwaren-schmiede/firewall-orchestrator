@@ -1,3 +1,4 @@
+using FWO.Basics;
 using FWO.Data.Middleware;
 using FWO.Logging;
 using FWO.Middleware.Client;
@@ -5,7 +6,6 @@ using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 using RestSharp;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
-using System.Text.Json;
 
 namespace FWO.Ui.Services
 {
@@ -19,8 +19,10 @@ namespace FWO.Ui.Services
         private TokenPair? currentTokenPair;
         private readonly JwtSecurityTokenHandler jwtHandler = new();
         private readonly SemaphoreSlim refreshSemaphore = new(1, 1);
+        private readonly SemaphoreSlim initializationSemaphore = new(1, 1);
         private const string TOKEN_PAIR_KEY = "token_pair";
-        private readonly Lazy<Task> initializationTask;
+        private const int kServerErrorStatusFloor = 500;
+        private bool initialized;
 
         /// <summary>
         /// Initializes a new instance of the TokenService class.
@@ -31,39 +33,60 @@ namespace FWO.Ui.Services
         {
             this.middlewareClient = middlewareClient;
             this.sessionStorage = sessionStorage;
-            this.initializationTask = new Lazy<Task>(() => InitializeAsync());
         }
 
         /// <summary>
         /// Initializes the TokenService by trying to load any existing token pair from session storage.
         /// </summary>
         /// <returns></returns>
-        private async Task InitializeAsync()
+        private async Task<bool> InitializeAsync()
         {
             try
             {
-                ProtectedBrowserStorageResult<TokenPair> result = await sessionStorage.GetAsync<TokenPair>(TOKEN_PAIR_KEY);
+                ProtectedBrowserStorageResult<TokenPair> result = await sessionStorage.GetAsync<TokenPair>(TOKEN_PAIR_KEY)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
 
                 if (result.Success && result.Value != null)
                 {
                     currentTokenPair = result.Value;
                 }
-                else
-                {
-                    currentTokenPair = null;
-                }
+
+                return true;
             }
             catch (CryptographicException ex)
             {
-                Log.WriteWarning("Token", $"Unreadable protected session token pair detected, clearing stored data: {ex.Message}");
+                Log.WriteWarning("Token", $"Unreadable protected session token pair detected, trying to clear stored data: {ex.Message}");
 
-                await ClearStoredTokenPair();
+                await ClearStoredTokenPairCore();
+                return true;
             }
             catch (Exception ex)
             {
-                Log.WriteWarning("Token", $"Failed to restore token pair from session storage, clearing stored data: {ex.Message}");
+                Log.WriteWarning("Token", $"Failed to initialize session storage: {ex.Message}. {GlobalConst.BrowserResourceSaving}.");
+                return false;
+            }
+        }
 
-                await ClearStoredTokenPair();
+        private async Task EnsureInitializedAsync()
+        {
+            if (initialized)
+            {
+                return;
+            }
+
+            await initializationSemaphore.WaitAsync();
+            try
+            {
+                if (initialized)
+                {
+                    return;
+                }
+
+                initialized = await InitializeAsync();
+            }
+            finally
+            {
+                initializationSemaphore.Release();
             }
         }
 
@@ -75,8 +98,17 @@ namespace FWO.Ui.Services
         public async Task SetTokenPair(TokenPair tokenPair)
         {
             currentTokenPair = tokenPair;
+            initialized = true;
 
-            await sessionStorage.SetAsync(TOKEN_PAIR_KEY, tokenPair);
+            try
+            {
+                await sessionStorage.SetAsync(TOKEN_PAIR_KEY, tokenPair)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception ex)
+            {
+                Log.WriteWarning("Token", $"Failed to write token pair to session storage: {ex.Message}. {GlobalConst.BrowserResourceSaving}.");
+            }
         }
 
         /// <summary>
@@ -85,7 +117,7 @@ namespace FWO.Ui.Services
         /// <returns>The access token or null if not available.</returns>
         public async Task<string?> GetAccessToken()
         {
-            await initializationTask.Value;
+            await EnsureInitializedAsync();
 
             return currentTokenPair?.AccessToken;
         }
@@ -96,7 +128,7 @@ namespace FWO.Ui.Services
         /// <returns>Token Pair object</returns>
         public async Task<TokenPair?> GetTokenPair()
         {
-            await initializationTask.Value;
+            await EnsureInitializedAsync();
 
             return currentTokenPair;
         }
@@ -107,9 +139,20 @@ namespace FWO.Ui.Services
         /// <returns>True if a refresh token is available; otherwise false.</returns>
         public async Task<bool> HasRefreshToken()
         {
-            await initializationTask.Value;
+            await EnsureInitializedAsync();
 
             return currentTokenPair != null && !string.IsNullOrWhiteSpace(currentTokenPair.RefreshToken);
+        }
+
+        /// <summary>
+        /// Checks whether a access token is available for the current session.
+        /// </summary>
+        /// <returns>True if a access token is available; otherwise false.</returns>
+        public async Task<bool> HasAccessToken()
+        {
+            await EnsureInitializedAsync();
+
+            return currentTokenPair != null && !string.IsNullOrWhiteSpace(currentTokenPair.AccessToken);
         }
 
         /// <summary>
@@ -118,7 +161,7 @@ namespace FWO.Ui.Services
         /// <returns>The current access and refresh token expiration timestamps, or null values when no token pair is stored.</returns>
         public async Task<(DateTime? AccessTokenExpiresAtUtc, DateTime? RefreshTokenExpiresAtUtc)> GetTokenExpirations()
         {
-            await initializationTask.Value;
+            await EnsureInitializedAsync();
 
             if (currentTokenPair is null)
             {
@@ -138,7 +181,7 @@ namespace FWO.Ui.Services
         /// <returns></returns>
         public async Task<bool> IsAccessTokenExpired()
         {
-            await initializationTask.Value;
+            await EnsureInitializedAsync();
 
             if (currentTokenPair is null || string.IsNullOrEmpty(currentTokenPair.AccessToken))
             {
@@ -165,13 +208,26 @@ namespace FWO.Ui.Services
         /// <returns>The refreshed token pair, or the current pair if no refresh is required. Returns null on failure.</returns>
         public async Task<TokenPair?> RefreshTokenPair(bool force = false)
         {
-            await initializationTask.Value;
+            return (await TryRefreshTokenPair(force)).Tokens;
+        }
 
-            if (currentTokenPair is null || string.IsNullOrEmpty(currentTokenPair.RefreshToken))
+        /// <summary>
+        /// Refreshes the token pair and reports whether a failure settles the session.
+        /// </summary>
+        /// <param name="force">Refresh even when the current access token has not expired.</param>
+        /// <returns>
+        /// The refreshed pair, or a result whose <see cref="TokenRefreshResult.Retryable"/>
+        /// tells the caller whether the stored pair may still be good.
+        /// </returns>
+        public async Task<TokenRefreshResult> TryRefreshTokenPair(bool force = false)
+        {
+            await EnsureInitializedAsync();
+
+            if (currentTokenPair is null || !await HasRefreshToken())
             {
                 Log.WriteWarning("Token Refresh", "No refresh token available");
 
-                return null;
+                return TokenRefreshResult.Settled;
             }
 
             await refreshSemaphore.WaitAsync();
@@ -180,7 +236,7 @@ namespace FWO.Ui.Services
             {
                 if (!force && !await IsAccessTokenExpired())
                 {
-                    return currentTokenPair;
+                    return new TokenRefreshResult(currentTokenPair, false);
                 }
 
                 RefreshTokenRequest refreshRequest = new()
@@ -189,7 +245,7 @@ namespace FWO.Ui.Services
                 };
 
                 RestResponse<TokenPair> response = await middlewareClient.RefreshToken(refreshRequest);
-                TokenPair? refreshedTokenPair = ParseTokenPairResponse(response);
+                TokenPair? refreshedTokenPair = TokenPairResponseParser.Parse(response, "Token Refresh");
 
                 if (response.IsSuccessful && refreshedTokenPair != null)
                 {
@@ -197,28 +253,30 @@ namespace FWO.Ui.Services
 
                     Log.WriteInfo("Token Refresh", "Successfully refreshed access token");
 
-                    return refreshedTokenPair;
+                    return new TokenRefreshResult(refreshedTokenPair, false);
                 }
-                else
-                {
-                    Log.WriteWarning("Token Refresh", $"Failed to refresh token: {response.ErrorMessage ?? response.Content}");
 
-                    return null;
-                }
+                bool retryable = IsRetryable(response);
+
+                Log.WriteWarning("Token Refresh", $"Failed to refresh token{(retryable ? " (retryable)" : "")}: " +
+                    $"{response.ErrorMessage ?? response.Content}");
+
+                return new TokenRefreshResult(null, retryable);
             }
             catch (TaskCanceledException)
             {
-                return null;
+                // Abandoned rather than answered, so nothing was learned about the token.
+                return TokenRefreshResult.Retry;
             }
             catch (OperationCanceledException)
             {
-                return null;
+                return TokenRefreshResult.Retry;
             }
             catch (Exception ex)
             {
                 Log.WriteError("Token Refresh", "Error refreshing access token", ex);
 
-                return null;
+                return TokenRefreshResult.Retry;
             }
             finally
             {
@@ -226,22 +284,19 @@ namespace FWO.Ui.Services
             }
         }
 
-        private static TokenPair? ParseTokenPairResponse(RestResponse<TokenPair> response)
+        /// <summary>
+        /// Whether a failed refresh says nothing about the refresh token itself.
+        /// </summary>
+        /// <param name="response">Response the middleware returned.</param>
+        /// <returns>True when the attempt did not complete or the middleware could not carry it out.</returns>
+        private static bool IsRetryable(RestResponse response)
         {
-            if (!response.IsSuccessful || string.IsNullOrWhiteSpace(response.Content))
-            {
-                return null;
-            }
-
-            try
-            {
-                return JsonSerializer.Deserialize<TokenPair>(response.Content);
-            }
-            catch (JsonException ex)
-            {
-                Log.WriteWarning("Token Refresh", $"Failed to deserialize refreshed token pair: {ex.Message}");
-                return null;
-            }
+            // ResponseStatus covers the cases where no HTTP answer arrived at all. A 5xx is
+            // an answer saying the middleware could not carry the request out - among them
+            // the 503 it returns when the API is unreachable. Anything else, 401 above all,
+            // is its verdict on this token and does settle the session.
+            return response.ResponseStatus != ResponseStatus.Completed
+                || (int)response.StatusCode >= kServerErrorStatusFloor;
         }
 
         private static DateTime? NormalizeTokenExpiration(DateTime expiration)
@@ -264,25 +319,25 @@ namespace FWO.Ui.Services
         /// <returns></returns>
         public async Task RevokeTokens()
         {
-            await initializationTask.Value;
-
-            string? refreshToken = currentTokenPair?.RefreshToken;
+            await EnsureInitializedAsync();
 
             try
             {
-                if (!string.IsNullOrWhiteSpace(refreshToken))
+                if (!await HasRefreshToken())
                 {
-                    RefreshTokenRequest revokeTokenRequest = new()
-                    {
-                        RefreshToken = refreshToken
-                    };
+                    return;
+                }
 
-                    RestResponse response = await middlewareClient.RevokeRefreshToken(revokeTokenRequest);
+                RefreshTokenRequest revokeTokenRequest = new()
+                {
+                    RefreshToken = currentTokenPair?.RefreshToken!
+                };
 
-                    if (!response.IsSuccessful)
-                    {
-                        Log.WriteWarning("Token Revoke", $"Server-side revoke failed during logout: {response.StatusCode} {response.ErrorMessage ?? response.Content}");
-                    }
+                RestResponse response = await middlewareClient.RevokeRefreshToken(revokeTokenRequest);
+
+                if (!response.IsSuccessful)
+                {
+                    Log.WriteWarning("Token Revoke", $"Server-side revoke failed during logout: {response.StatusCode} {response.ErrorMessage ?? response.Content}");
                 }
             }
             catch (Exception ex)
@@ -301,15 +356,24 @@ namespace FWO.Ui.Services
         /// <returns></returns>
         private async Task ClearStoredTokenPair()
         {
+            await EnsureInitializedAsync();
+
+            await ClearStoredTokenPairCore();
+        }
+
+        private async Task ClearStoredTokenPairCore()
+        {
             currentTokenPair = null;
+            initialized = true;
 
             try
             {
-                await sessionStorage.DeleteAsync(TOKEN_PAIR_KEY);
+                await sessionStorage.DeleteAsync(TOKEN_PAIR_KEY)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
             }
             catch (Exception ex)
             {
-                Log.WriteWarning("Token", $"Failed to clear stored token pair: {ex.Message}");
+                Log.WriteDebug("Token", $"Failed to clear stored token pair: {ex.Message}. {GlobalConst.BrowserResourceSaving}.");
             }
         }
     }

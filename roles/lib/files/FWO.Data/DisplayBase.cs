@@ -19,7 +19,7 @@ namespace FWO.Data
             StringBuilder result = new();
             string ports = service.DestinationPortEnd == null || service.DestinationPortEnd == 0 || service.DestinationPort == service.DestinationPortEnd ?
                 $"{service.DestinationPort}" : $"{service.DestinationPort}-{service.DestinationPortEnd}";
-            bool displayPorts = service.Protocol != null && service.Protocol.HasPorts() && service.DestinationPort != null;
+            bool displayPorts = IpProtocol.HasPorts(service.Protocol?.Id) && service.DestinationPort != null;
             if (isTechReport)
             {
                 if (displayPorts)
@@ -60,39 +60,16 @@ namespace FWO.Data
 
         public static List<IpProtocol> CustomSortProtocols(List<IpProtocol> ListIn)
         {
-            List<IpProtocol> ListOut = [];
-            IpProtocol? tcp = ListIn.Find(x => x.Name.ToLower() == "tcp");
-            if (tcp != null)
-            {
-                ListOut.Add(tcp);
-                ListIn.Remove(tcp);
-            }
-            IpProtocol? udp = ListIn.Find(x => x.Name.ToLower() == "udp");
-            if (udp != null)
-            {
-                ListOut.Add(udp);
-                ListIn.Remove(udp);
-            }
-            IpProtocol? icmp = ListIn.Find(x => x.Name.ToLower() == "icmp");
-            if (icmp != null)
-            {
-                ListOut.Add(icmp);
-                ListIn.Remove(icmp);
-            }
-            foreach (var proto in ListIn.Where(p => p.Name.ToLower() != "unassigned").OrderBy(x => x.Name).ToList())
-            {
-                ListOut.Add(proto);
-            }
-            return ListOut;
+            return ProtocolDisplayHelper.CustomSortProtocols(ListIn, null, false);
         }
 
         public static string DisplayIpWithName(NetworkObject elem)
         {
             if (elem.Name != null && elem.Name != "")
             {
-                return elem.Name + DisplayIp(elem.IP, elem.IpEnd, true);
+                return elem.Name + DisplayIp(elem.IP ?? "", elem.IpEnd ?? "", true);
             }
-            return DisplayIp(elem.IP, elem.IpEnd);
+            return DisplayIp(elem.IP ?? "", elem.IpEnd ?? "");
         }
 
         public static string DisplayIp(string ip1, string ip2, bool inBrackets = false)
@@ -312,27 +289,32 @@ namespace FWO.Data
             return $"[{string.Join(",", quoted)}]";
         }
 
+        /// <summary>
+        /// Renders the members of a group as the cell of a report table.
+        /// The member names are imported values, so each one is encoded before the separators this method
+        /// adds itself are put between them - the break is markup this code means, the name is not.
+        /// </summary>
+        /// <param name="MemberNames">The member names as the importer stored them, separated by '|'.</param>
+        /// <returns>The table cell holding the member names.</returns>
         public static string MemberNamesAsHtml(string MemberNames)
         {
-            if (MemberNames != null && MemberNames.Contains("|"))
-            {
-                return $"<td>{string.Join("<br>", MemberNames.Split('|'))}</td>";
-            }
-            else
-            {
-                return $"<td>{MemberNames}</td>";
-            }
+            return $"<td>{MemberNamesWithoutHtml(MemberNames)}</td>";
         }
+
+        /// <summary>
+        /// Renders the members of a group without the surrounding table cell, for callers that place them
+        /// in markup of their own. The member names are encoded, only the line breaks between them are markup.
+        /// </summary>
+        /// <param name="MemberNames">The member names as the importer stored them, separated by '|'.</param>
+        /// <returns>The member names, one per line.</returns>
         public static string MemberNamesWithoutHtml(string MemberNames)
         {
-            if (MemberNames != null && MemberNames.Contains("|"))
+            if (MemberNames == null)
             {
-                return $"{string.Join("<br>", MemberNames.Split('|'))}";
+                return "";
             }
-            else
-            {
-                return $"{MemberNames}";
-            }
+
+            return string.Join("<br>", MemberNames.Split('|').Select(HtmlOutputEncoder.EncodeText));
         }
 
         public static string MemberNamesAsCSV(string MemberNames)

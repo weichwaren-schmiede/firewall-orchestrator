@@ -18,11 +18,20 @@ namespace FWO.Data
         [JsonProperty("additional_info"), JsonPropertyName("additional_info")]
         public Dictionary<string, string>? AdditionalInfo { get; set; }
 
+        /// <summary>
+        /// Transient display value used by the owner recertification table for the selected additional-info column.
+        /// </summary>
+        [Newtonsoft.Json.JsonIgnore, System.Text.Json.Serialization.JsonIgnore]
+        public string AdditionalInfoValue { get; set; } = "";
+
         [JsonProperty("criticality"), JsonPropertyName("criticality")]
         public string? Criticality { get; set; }
 
         [JsonProperty("owner_lifecycle_state_id"), JsonPropertyName("owner_lifecycle_state_id")]
         public int? OwnerLifeCycleStateId { get; set; }
+
+        [JsonProperty("owner_lifecycle_state"), JsonPropertyName("owner_lifecycle_state")]
+        public OwnerLifeCycleState? OwnerLifeCycleState { get; set; }
 
         [JsonProperty("active"), JsonPropertyName("active")]
         public bool Active { get; set; } = true;
@@ -64,6 +73,13 @@ namespace FWO.Data
         public bool RecertUpcoming { get; set; } = false;
         public long? LastRecertId { get; set; }
 
+        /// <summary>
+        /// Indicates whether this owner still has to be created in the database.
+        /// The default super-owner has Id 0 but already exists, so it is never considered new.
+        /// </summary>
+        [Newtonsoft.Json.JsonIgnore, System.Text.Json.Serialization.JsonIgnore]
+        public bool IsNew => Id <= 0 && !IsDefault;
+
         public FwoOwner()
         { }
 
@@ -73,7 +89,10 @@ namespace FWO.Data
             LastRecertCheck = owner.LastRecertCheck;
             RecertCheckParamString = owner.RecertCheckParamString;
             AdditionalInfo = owner.AdditionalInfo == null ? null : new Dictionary<string, string>(owner.AdditionalInfo);
+            AdditionalInfoValue = owner.AdditionalInfoValue;
             Criticality = owner.Criticality;
+            OwnerLifeCycleStateId = owner.OwnerLifeCycleStateId;
+            OwnerLifeCycleState = owner.OwnerLifeCycleState == null ? null : new OwnerLifeCycleState(owner.OwnerLifeCycleState);
             Active = owner.Active;
             ImportSource = owner.ImportSource;
             CommSvcPossible = owner.CommSvcPossible;

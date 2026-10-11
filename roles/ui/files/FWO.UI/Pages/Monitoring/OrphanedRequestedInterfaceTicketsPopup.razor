@@ -139,7 +139,8 @@
 
             List<WfTicket> openTickets = await apiConnection.SendQueryAsync<List<WfTicket>>(RequestQueries.getTicketsByParameters, new
             {
-                cutOffDate = DateTime.Now,
+                createdFrom = (DateTime?)null,
+                createdUntil = (DateTime?)null,
                 taskType = WfTaskType.new_interface.ToString(),
                 fromState = NewInterfaceStateMatrix.LowestInputState,
                 toState = NewInterfaceStateMatrix.LowestEndState
@@ -147,6 +148,7 @@
             Tickets = [];
             List<OpenInterfaceTask> openInterfaceTasks = BuildOpenInterfaceTasks(openTickets);
             MarkDuplicateOpenInterfaceTasks(openInterfaceTasks);
+            MarkMultipleRequestTasks(openInterfaceTasks);
             foreach (IGrouping<long, OpenInterfaceTask> ticketTasks in openInterfaceTasks.GroupBy(task => task.Ticket.Id))
             {
                 OrphanedRequestedInterfaceTicketRow? row = await BuildProblemRow(ticketTasks);
@@ -190,6 +192,21 @@
         }
     }
 
+    private static void MarkMultipleRequestTasks(List<OpenInterfaceTask> openInterfaceTasks)
+    {
+        foreach (IGrouping<long, OpenInterfaceTask> ticketGroup in openInterfaceTasks.GroupBy(task => task.Ticket.Id))
+        {
+            if (ticketGroup.Count() <= 1)
+            {
+                continue;
+            }
+            foreach (OpenInterfaceTask openInterfaceTask in ticketGroup)
+            {
+                openInterfaceTask.HasMultipleRequestTasksInTicket = true;
+            }
+        }
+    }
+
     private static string DuplicateKey(OpenInterfaceTask openInterfaceTask)
     {
         WfReqTask task = openInterfaceTask.Task;
@@ -210,8 +227,9 @@
         List<string> interfaceNames = [];
         List<string> connectionIds = [];
         List<string> problemReasons = [];
+        List<long> relevantRequestTaskIds = [];
         bool canReject = false;
-        bool canCloseAsDone = false;
+        bool allProblemTasksCanCloseAsDone = true;
         foreach (OpenInterfaceTask openInterfaceTask in ticketTasks)
         {
             TaskProblemClassification classification = await ClassifyTaskProblems(openInterfaceTask);
@@ -222,8 +240,9 @@
             interfaceNames.Add(DisplayTaskName(openInterfaceTask.Task));
             connectionIds.Add(DisplayConnectionId(openInterfaceTask.Task));
             problemReasons.AddRange(classification.Reasons);
+            relevantRequestTaskIds.Add(openInterfaceTask.Task.Id);
             canReject |= classification.HasStructuralProblem;
-            canCloseAsDone |= classification.CanCloseAsDone;
+            allProblemTasksCanCloseAsDone &= classification.CanCloseAsDone;
         }
 
         if (problemReasons.Count == 0)
@@ -239,8 +258,9 @@
             InterfaceNames = string.Join(", ", interfaceNames.OrderBy(name => name)),
             ConnectionIds = string.Join(", ", connectionIds.Distinct().OrderBy(id => id)),
             ProblemReasons = string.Join(", ", problemReasons.Distinct().OrderBy(reason => reason)),
+            RequestTaskIds = [.. relevantRequestTaskIds.Distinct()],
             CanReject = canReject,
-            CanCloseAsDone = canCloseAsDone
+            CanCloseAsDone = !canReject && allProblemTasksCanCloseAsDone
         };
     }
 
@@ -253,6 +273,10 @@
         if (openInterfaceTask.DuplicateLooking)
         {
             reasons.Add(userConfig.GetText("E9022"));
+        }
+        if (openInterfaceTask.HasMultipleRequestTasksInTicket)
+        {
+            reasons.Add(userConfig.GetText("E9029"));
         }
         if (connId <= 0)
         {
@@ -425,11 +449,17 @@
         try
         {
             WorkInProgress = true;
-            TicketCreator ticketCreator = new(apiConnection, userConfig, authenticationStateTask.Result.User, middlewareClient, WorkflowPhases.implementation, new ComplianceRequestedRulePolicyChecker(userConfig, apiConnection));
+            TicketCreator ticketCreator = new(apiConnection, userConfig, authenticationStateTask.Result.User, middlewareClient, WorkflowPhases.implementation, new ComplianceRequestedRulePolicyChecker(userConfig, apiConnection, middlewareClient));
             int promotedCount = 0;
             foreach (long ticketId in ticketIds.Distinct())
             {
-                if (await ticketCreator.PromoteNewInterfaceImplTask(ticketId, targetState, comment))
+                List<long> requestTaskIds = Tickets
+                    .Where(ticket => ticket.TicketId == ticketId)
+                    .SelectMany(ticket => ticket.RequestTaskIds)
+                    .Distinct()
+                    .ToList();
+                IEnumerable<long>? scopedRequestTaskIds = requestTaskIds.Count > 0 ? requestTaskIds : null;
+                if (await ticketCreator.PromoteNewInterfaceImplTasks(ticketId, targetState, scopedRequestTaskIds, comment) > 0)
                 {
                     promotedCount++;
                 }
@@ -464,6 +494,7 @@
         public string InterfaceNames { get; set; } = "-";
         public string ConnectionIds { get; set; } = "-";
         public string ProblemReasons { get; set; } = "-";
+        public List<long> RequestTaskIds { get; set; } = [];
         public bool CanReject { get; set; }
         public bool CanCloseAsDone { get; set; }
     }
@@ -473,6 +504,7 @@
         public WfTicket Ticket { get; } = ticket;
         public WfReqTask Task { get; } = task;
         public bool DuplicateLooking { get; set; }
+        public bool HasMultipleRequestTasksInTicket { get; set; }
     }
 
     private sealed class TaskProblemClassification(List<string> reasons, bool hasStructuralProblem, bool canCloseAsDone = false)

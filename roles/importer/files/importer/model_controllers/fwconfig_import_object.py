@@ -1,20 +1,24 @@
+from __future__ import annotations
+
 import datetime
 import traceback
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import fwo_const
 from fwo_api_call import FwoApi, FwoApiCall
 from fwo_exceptions import FwoDuplicateKeyViolationError, FwoImporterError
 from fwo_log import ChangeLogger, FWOLogger
-from models.fwconfig_normalized import FwConfigNormalized
-from models.fwconfigmanager import FwConfigManager
 from models.networkobject import NetworkObjectForImport
 from models.serviceobject import ServiceObjectForImport
 from models.time_object import TimeObject, TimeObjectForImport
-from states.global_state import GlobalState
-from states.import_state import ImportState
-from states.management_state import ManagementState
+
+if TYPE_CHECKING:
+    from models.fwconfig_normalized import FwConfigNormalized
+    from models.fwconfigmanager import FwConfigManager
+    from states.global_state import GlobalState
+    from states.import_state import ImportState
+    from states.management_state import ManagementState
 
 
 class Type(Enum):
@@ -350,22 +354,22 @@ class FwConfigImportObject:
             if "errors" in import_result:
                 raise FwoImporterError(f"failed to update objects in updateObjectsViaApi: {import_result['errors']!s}")
             _ = (
-                int(import_result["data"]["insert_object"]["affected_rows"])
-                + int(import_result["data"]["insert_service"]["affected_rows"])
-                + int(import_result["data"]["insert_usr"]["affected_rows"])
-                + int(import_result["data"]["update_object"]["affected_rows"])
-                + int(import_result["data"]["update_service"]["affected_rows"])
-                + int(import_result["data"]["update_usr"]["affected_rows"])
-                + int(import_result["data"]["update_zone"]["affected_rows"])
+                int(import_result["data"]["insert_firewall_nw_object"]["affected_rows"])
+                + int(import_result["data"]["insert_firewall_nw_service"]["affected_rows"])
+                + int(import_result["data"]["insert_firewall_nw_user"]["affected_rows"])
+                + int(import_result["data"]["update_firewall_nw_object"]["affected_rows"])
+                + int(import_result["data"]["update_firewall_nw_service"]["affected_rows"])
+                + int(import_result["data"]["update_firewall_nw_user"]["affected_rows"])
+                + int(import_result["data"]["update_firewall_zone"]["affected_rows"])
             )
-            new_nwobj_ids = import_result["data"]["insert_object"]["returning"]
-            new_nwsvc_ids = import_result["data"]["insert_service"]["returning"]
-            new_user_ids = import_result["data"]["insert_usr"]["returning"]
-            new_zone_ids = import_result["data"]["insert_zone"]["returning"]
-            removed_nwobj_ids = import_result["data"]["update_object"]["returning"]
-            removed_nwsvc_ids = import_result["data"]["update_service"]["returning"]
-            removed_user_ids = import_result["data"]["update_usr"]["returning"]
-            removed_zone_ids = import_result["data"]["update_zone"]["returning"]
+            new_nwobj_ids = import_result["data"]["insert_firewall_nw_object"]["returning"]
+            new_nwsvc_ids = import_result["data"]["insert_firewall_nw_service"]["returning"]
+            new_user_ids = import_result["data"]["insert_firewall_nw_user"]["returning"]
+            new_zone_ids = import_result["data"]["insert_firewall_zone"]["returning"]
+            removed_nwobj_ids = import_result["data"]["update_firewall_nw_object"]["returning"]
+            removed_nwsvc_ids = import_result["data"]["update_firewall_nw_service"]["returning"]
+            removed_user_ids = import_result["data"]["update_firewall_nw_user"]["returning"]
+            removed_zone_ids = import_result["data"]["update_firewall_zone"]["returning"]
         except Exception:
             raise FwoImporterError(f"failed to update objects: {traceback.format_exc()!s}")
         return (
@@ -595,6 +599,15 @@ class FwConfigImportObject:
             return "svcgrp"
         return "usergrp"
 
+    def get_group_gql_table(self, prefix: str) -> str:
+        # GraphQL root/type base name (firewall schema) for a group prefix. The _flat
+        # tables stay in the public schema, so they keep their prefix-based names.
+        return {
+            "objgrp": "firewall_nw_object_group",
+            "svcgrp": "firewall_nw_service_group",
+            "usergrp": "firewall_nw_user_group",
+        }.get(prefix, prefix)
+
     def remove_outdated_memberships(
         self,
         import_state: ImportState,
@@ -608,6 +621,7 @@ class FwConfigImportObject:
 
         prev_config_objects, current_config_objects = self.get_config_objects(management_state, typ, prev_config)
         prefix = self.get_prefix(typ)
+        gql = self.get_group_gql_table(prefix)
 
         for uid in prev_config_objects:
             self.find_removed_objects(
@@ -625,8 +639,8 @@ class FwConfigImportObject:
             return
 
         import_mutation = f"""
-            mutation removeOutdated{prefix.capitalize()}Memberships($importId: bigint!, $removedMembers: [{prefix}_bool_exp!]!, $removedFlats: [{prefix}_flat_bool_exp!]!) {{
-                update_{prefix}(where: {{_and: [{{_or: $removedMembers}}, {{removed: {{_is_null: true}}}}]}},
+            mutation removeOutdated{prefix.capitalize()}Memberships($importId: bigint!, $removedMembers: [{gql}_bool_exp!]!, $removedFlats: [{prefix}_flat_bool_exp!]!) {{
+                update_{gql}(where: {{_and: [{{_or: $removedMembers}}, {{removed: {{_is_null: true}}}}]}},
                     _set: {{
                         removed: $importId,
                         active: false
@@ -656,7 +670,7 @@ class FwConfigImportObject:
                     f"fwo_api:importNwObject - error in removeOutdated{prefix.capitalize()}Memberships: {import_result['errors']!s}"
                 )
             else:
-                _ = int(import_result["data"][f"update_{prefix}"]["affected_rows"]) + int(
+                _ = int(import_result["data"][f"update_{gql}"]["affected_rows"]) + int(
                     import_result["data"][f"update_{prefix}_flat"]["affected_rows"]
                 )
         except Exception:
@@ -842,9 +856,10 @@ class FwConfigImportObject:
         new_group_member_flats: list[dict[str, Any]],
         prefix: str,
     ):
+        gql = self.get_group_gql_table(prefix)
         import_mutation = f"""
-            mutation update{prefix.capitalize()}Groups($groups: [{prefix}_insert_input!]!, $groupFlats: [{prefix}_flat_insert_input!]!) {{
-                insert_{prefix}(objects: $groups) {{
+            mutation update{prefix.capitalize()}Groups($groups: [{gql}_insert_input!]!, $groupFlats: [{prefix}_flat_insert_input!]!) {{
+                insert_{gql}(objects: $groups) {{
                     affected_rows
                 }}
                 insert_{prefix}_flat(objects: $groupFlats) {{
@@ -863,7 +878,7 @@ class FwConfigImportObject:
                 if "duplicate" in import_result["errors"]:
                     raise FwoDuplicateKeyViolationError(str(import_result["errors"]))
                 raise FwoImporterError(str(import_result["errors"]))
-            _ = int(import_result["data"][f"insert_{prefix}"]["affected_rows"]) + int(
+            _ = int(import_result["data"][f"insert_{gql}"]["affected_rows"]) + int(
                 import_result["data"][f"insert_{prefix}_flat"]["affected_rows"]
             )
         except Exception:

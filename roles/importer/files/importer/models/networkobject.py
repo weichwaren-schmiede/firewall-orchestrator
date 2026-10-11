@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 from typing import Any
 
 from netaddr import AddrFormatError, IPNetwork
 from pydantic import BaseModel, field_serializer, field_validator
+
+NETWORK_OBJECT_TYPES_WITHOUT_STATIC_IP = frozenset({"group", "dynamic_net_obj", "domain", "access-role"})
 
 
 class NetworkObject(BaseModel):

@@ -1,17 +1,15 @@
 @inherits LayoutComponentBase
-@using FWO.Data.Middleware
+@using System.Security.Claims;
+@using System.Timers
 @using FWO.Api.Client.ExceptionHandling
+@using FWO.Data.Middleware
 @using FWO.Middleware.Client
+@using FWO.Services
 @using FWO.Services.EventMediator.Events
 @using FWO.Services.EventMediator.Interfaces
-@using FWO.Services
 @using FWO.Ui.Auth
 @using FWO.Ui.Data
 @using FWO.Ui.Services
-@using System.Timers
-@using System.Security.Claims;
-@using Microsoft.AspNetCore.Components.Server.Circuits;
-@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
 @using RestSharp
 
 @inject ApiConnection apiConnection
@@ -20,12 +18,11 @@
 @inject MiddlewareClient middlewareClient
 @inject NavigationManager NavigationManager
 @inject AuthenticationStateProvider authenticationProvider
-@inject ProtectedSessionStorage sessionStorage
-@inject CircuitHandler circuitHandler
-@inject TokenService tokenService
+@inject ITokenRefreshCoordinator tokenRefreshCoordinator
 @inject IEventMediator EventMediator
+@inject TokenService TokenService
 
-@implements IDisposable
+@implements IAsyncDisposable
 
 <NavigationMenu @bind-ShowAlert="showAlert" />
 
@@ -38,7 +35,14 @@
         <button type="button" @onclick="@(() => ShowMessage("success", "success", MessageType.Success))">success</button>
         <button type="button" @onclick="@(() => {  UIMessageQue.Clear(); UIMessages.Clear(); })">clear</button> *@
         <CascadingValue Value="@DisplayMessageInUiFunction">
-            @Body
+            @if (ambientRoleInitialized)
+            {
+                @Body
+            }
+            else
+            {
+                <Loading />
+            }
         </CascadingValue>
     </div>
 </div>
@@ -109,29 +113,42 @@
     private bool showReloginDialog;
     private bool reloginAbortable;
     private string? password;
-    private ClaimsPrincipal? user;
+    private ClaimsPrincipal? User;
     private List<UIMessage> UIMessages = [];
     private Queue<UIMessage> UIMessageQue = [];
     private Timer? UIMessageQueTimer;
-    private static readonly TimeSpan TokenRefreshCheckInterval = TimeSpan.FromSeconds(30);
-    private PeriodicTaskRunner? tokenRefreshRunner;
-    private string? LastLocation;
+    private IDisposable? locationChangingRegistration;
+    private bool ambientRoleInitialized;
 
     protected override async Task OnInitializedAsync()
     {
         EventMediator.Subscribe<PermissionChangedEvent>(nameof(PermissionChangedEvent), _ => OnPermissionsChanged(_.EventArgs));
-        EventMediator.Subscribe<JwtExpiredEvent>(nameof(JwtExpiredEvent), _ => OnJwtExpired(_.EventArgs));
-        EventMediator.Subscribe<UserSessionClosedEvent>(nameof(UserSessionClosedEvent), _ => OnUserSessionClosed(_.EventArgs));
+        EventMediator.Subscribe<ReloginRequiredEvent>(nameof(ReloginRequiredEvent), _ => OnReloginRequired(_.EventArgs));
+        apiConnection.OnExecutionModeChanged += OnExecutionModeChanged;
+        authenticationProvider.AuthenticationStateChanged += OnAuthenticationStateChanged;
 
-        DisplayMessageInUiFunction = DisplayMessageInUi;
+        DisplayMessageInUiFunction = (exception, title, message, errorFlag) =>
+            _ = DisplayMessageInUiAsync(exception, title, message, errorFlag);
 
-        await CheckAndRefreshTokenAsync();
+        locationChangingRegistration = NavigationManager.RegisterLocationChangingHandler(OnLocationChanging);
 
-        NavigationManager.LocationChanged += OnLocationChanged;
+        if (authenticationStateTask != null)
+        {
+            try
+            {
+                AuthenticationState authState = await authenticationStateTask.WaitAsync(TimeSpan.FromSeconds(5));
+                await ApplyAuthenticationStateAsync(authState);
+            }
+            catch (TimeoutException ex)
+            {
+                Log.WriteWarning(nameof(MainLayout), $"Timed out while waiting for authentication state during layout initialization: {ex.Message}");
+            }
+        }
 
-        user = authenticationStateTask!.Result.User;
+        UpdateAmbientModuleRole(NavigationManager.Uri);
+        ambientRoleInitialized = true;
 
-        alertSubscription = apiConnection.GetSubscription<List<Alert>>(GraphqlExceptionHandler.Handle, OnAlertUpdate, MonitorQueries.subscribeAlertChanges);
+        await EnsureAlertSubscriptionAsync();
 
         UIMessageQueTimer = new()
         {
@@ -142,46 +159,163 @@
 
         UIMessageQueTimer.Elapsed += OnUIMessageTimerTick;
 
-        StartTokenRefreshRunner();
+        await tokenRefreshCoordinator.StartAsync();
     }
 
-    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    private ValueTask OnLocationChanging(LocationChangingContext context)
     {
-        if (LastLocation != e.Location)
-        {
-            LastLocation = e.Location;
-
-            await CheckAndRefreshTokenAsync();
-        }
+        UpdateAmbientModuleRole(context.TargetLocation);
+        return ValueTask.CompletedTask;
     }
 
-    private async Task CheckAndRefreshTokenAsync()
+    private void OnExecutionModeChanged(object? sender, string executionMode)
+    {
+        UpdateAmbientModuleRole(NavigationManager.Uri);
+    }
+
+    private void OnAuthenticationStateChanged(Task<AuthenticationState> authStateTask)
+    {
+        // the provider's handler delegate returns void, so this work can only be started, never awaited.
+        // starting a task and discarding it is safe because the handler below swallows and logs every
+        // failure, so nothing is left unobserved. an "async void" handler instead rethrows on the
+        // synchronization context, where an escaping exception takes the whole circuit down with it.
+        _ = HandleAuthenticationStateChangedAsync(authStateTask);
+    }
+
+    private async Task HandleAuthenticationStateChangedAsync(Task<AuthenticationState> authStateTask)
     {
         try
         {
-            if (!await tokenService.HasRefreshToken())
+            AuthenticationState authState = await authStateTask;
+            await InvokeAsync(async () =>
             {
-                return;
-            }
-
-            if (await tokenService.IsAccessTokenExpired())
-            {
-                Log.WriteDebug("Token Check", "Access token expired, attempting refresh...");
-
-                CircuitHandlerService circuitHandlerService = (CircuitHandlerService)circuitHandler;
-
-                bool refreshed = await ((AuthStateProvider)authenticationProvider).RefreshAuthenticationState(apiConnection, middlewareClient, userConfig, circuitHandlerService);
-
-                if (refreshed)
-                {
-                    user = (await authenticationProvider.GetAuthenticationStateAsync()).User;
-                }
-            }
+                await ApplyAuthenticationStateAsync(authState);
+                StateHasChanged();
+            });
         }
         catch (Exception ex)
         {
-            Log.WriteError("Token Check", "Error during token check/refresh", ex);
+            Log.WriteWarning(nameof(MainLayout), $"Failed to process authentication state change: {ex.Message}");
         }
+    }
+
+    private async Task ApplyAuthenticationStateAsync(AuthenticationState authState)
+    {
+        User = authState.User;
+        UpdateAmbientModuleRole(NavigationManager.Uri);
+        await EnsureAlertSubscriptionAsync();
+    }
+
+    private void UpdateAmbientModuleRole(string location)
+    {
+        if (User == null)
+        {
+            Log.WriteDebug(nameof(MainLayout), "Skipping ambient role update because no authenticated user is available yet.");
+            return;
+        }
+
+        apiConnection.SetAmbientRole(User, GetAmbientRolesForLocation(location));
+    }
+
+    private async Task EnsureAlertSubscriptionAsync()
+    {
+        if (alertSubscription != null || User == null || !userConfig.CanUseAnyRole(Roles.Admin, Roles.Auditor))
+        {
+            return;
+        }
+
+        alertSubscription = await apiConnection.RunWithMonitoringRole(User,
+            () => Task.FromResult(apiConnection.GetSubscription<List<Alert>>(GraphqlExceptionHandler.Handle, OnAlertUpdate, MonitorQueries.subscribeAlertChanges)));
+    }
+
+    private List<string> GetAmbientRolesForLocation(string location)
+    {
+        string path = GetRelativeLocationPath(location);
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return [];
+        }
+
+        if (path.StartsWith("networkmodelling"))
+        {
+            return [Roles.Modeller, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("request"))
+        {
+            return GetRequestAmbientRoles(path);
+        }
+        if (path.StartsWith("report"))
+        {
+            return [Roles.ReporterViewAll, Roles.Reporter, Roles.Modeller, Roles.Recertifier, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("certification"))
+        {
+            return [Roles.Recertifier, Roles.Modeller, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("monitoring"))
+        {
+            return [Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("compliance"))
+        {
+            return [Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("network_analysis"))
+        {
+            return [Roles.Planner, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("settings"))
+        {
+            return GetSettingsAmbientRoles(path);
+        }
+        return [];
+    }
+
+    private string GetRelativeLocationPath(string location)
+    {
+        return NavigationPathHelper.GetBaseRelativePath(location, NavigationManager.BaseUri);
+    }
+
+    private static List<string> GetRequestAmbientRoles(string path)
+    {
+        if (path.StartsWith("request/tickets") || path.StartsWith("request/ticketsoverview"))
+        {
+            return [Roles.Requester, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("request/approvals"))
+        {
+            return [Roles.Approver, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("request/plannings"))
+        {
+            return [Roles.Planner, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("request/implementations"))
+        {
+            return [Roles.Implementer, Roles.Reviewer, Roles.Admin, Roles.Auditor];
+        }
+        if (path.StartsWith("request/reviews"))
+        {
+            return [Roles.Reviewer, Roles.Admin, Roles.Auditor];
+        }
+        return [Roles.Requester, Roles.Approver, Roles.Planner, Roles.Implementer, Roles.Reviewer, Roles.Admin, Roles.Auditor];
+    }
+
+    private static List<string> GetUserSettingsAmbientRoles()
+    {
+        return [Roles.Modeller, Roles.Recertifier, Roles.ReporterViewAll, Roles.Reporter,
+            Roles.Requester, Roles.Approver, Roles.Planner, Roles.Implementer, Roles.Reviewer,
+            Roles.Admin, Roles.Auditor];
+    }
+
+    private static List<string> GetSettingsAmbientRoles(string path)
+    {
+        if (path.StartsWith("settings/user") || path.StartsWith("settings/personal"))
+        {
+            return GetUserSettingsAmbientRoles();
+        }
+        return [Roles.Admin, Roles.Auditor];
     }
 
     private async Task KeyHandler(KeyboardEventArgs ev)
@@ -201,37 +335,12 @@
         }
     }
 
-    private void OnJwtExpired(JwtExpiredEventArgs? e)
+    private void OnReloginRequired(ReloginRequiredEventArgs? e)
     {
-        if (user?.Identity?.IsAuthenticated == true && !string.IsNullOrWhiteSpace(e?.UserDn) && DistName.DnEquals(e.UserDn, userConfig.User.Dn))
+        if (User?.Identity?.IsAuthenticated == true && !string.IsNullOrWhiteSpace(e?.UserDn) && DistName.DnEquals(e.UserDn, userConfig.User.Dn))
         {
             ShowReloginDialog(userConfig.GetText("jwt_expired_title"), userConfig.GetText("jwt_expired_text"), reloginAbortable: false);
         }
-    }
-
-    private void OnUserSessionClosed(UserSessionClosedEventArgs? e)
-    {
-        if (DistName.DnEquals(e?.UserDn, userConfig.User.Dn))
-        {
-            StopTokenRefreshRunner();
-        }
-    }
-
-    private void StartTokenRefreshRunner()
-    {
-        if (tokenRefreshRunner != null)
-        {
-            return;
-        }
-
-        tokenRefreshRunner = new(() => InvokeAsync(CheckAndRefreshTokenAsync), TokenRefreshCheckInterval);
-        tokenRefreshRunner.Start();
-    }
-
-    private void StopTokenRefreshRunner()
-    {
-        tokenRefreshRunner?.Dispose();
-        tokenRefreshRunner = null;
     }
 
     private void ShowReloginDialog(string title, string text, bool reloginAbortable)
@@ -257,7 +366,7 @@
         try
         {
             RestResponse<TokenPair> authResponse = await ((AuthStateProvider)authenticationProvider)
-                .Authenticate(userConfig.User.Name, password, apiConnection, middlewareClient, userConfig, ((CircuitHandlerService)circuitHandler));
+                .Authenticate(userConfig.User.Name, password, apiConnection, middlewareClient, userConfig);
 
             if (authResponse.StatusCode == System.Net.HttpStatusCode.OK)
             {
@@ -280,8 +389,7 @@
 
     private void OnAlertUpdate(List<Alert> alerts)
     {
-        user = authenticationStateTask!.Result.User;
-        showAlert = userConfig.CanUseAnyRole(Roles.Admin, Roles.FwAdmin, Roles.Auditor) && alerts.Count() > 0;
+        showAlert = userConfig.CanUseAnyRole(Roles.Admin, Roles.Auditor) && alerts.Count > 0;
 
         InvokeAsync(StateHasChanged);
     }
@@ -313,15 +421,18 @@
                 Type = type
             };
 
-            Timer messageTimer = new Timer(showtime.Value);
-            messageTimer.Elapsed += (sender, e) => HideMessage(sender, e, uiMessage.Id);
-            messageTimer.AutoReset = false;
-
-            uiMessage.ShowTimer = messageTimer;
+            Timer? messageTimer = null;
+            if (showtime > 0)
+            {
+                messageTimer = new Timer(showtime.Value);
+                messageTimer.Elapsed += (sender, e) => HideMessage(sender, e, uiMessage.Id);
+                messageTimer.AutoReset = false;
+                uiMessage.ShowTimer = messageTimer;
+            }
 
             if (UIMessages.Count < userConfig.MaxMessages)
             {
-                messageTimer.Start();
+                messageTimer?.Start();
                 UIMessages.Add(uiMessage);
                 InvokeAsync(StateHasChanged);
             }
@@ -355,7 +466,7 @@
         if (UIMessageQue.Count > 0 && UIMessages.Count < userConfig.MaxMessages)
         {
             UIMessage uiMessage = UIMessageQue.Dequeue();
-            uiMessage.ShowTimer!.Start();
+            uiMessage.ShowTimer?.Start();
             UIMessages.Add(uiMessage);
 
             InvokeAsync(StateHasChanged);
@@ -378,82 +489,134 @@
         InvokeAsync(StateHasChanged);
     }
 
-    private void DisplayMessageInUi(Exception? exception = null, string title = "", string message = "", bool ErrorFlag = false)
+    /// <summary>
+    /// Displays a user or exception message in the UI and writes the corresponding log entry.
+    /// Invoked in a fire-and-forget manner via <see cref="DisplayMessageInUiFunction"/>, therefore
+    /// all exceptions are handled internally.
+    /// </summary>
+    /// <param name="exception">Exception to report, or null for a plain user message.</param>
+    /// <param name="title">Title of the message.</param>
+    /// <param name="message">Message text.</param>
+    /// <param name="errorFlag">Marks the message as an error.</param>
+    private async Task DisplayMessageInUiAsync(Exception? exception = null, string title = "", string message = "", bool errorFlag = false)
     {
-        int severity = 0;
-        string cause = "";
-        string description = "";
-        MessageType messageType = MessageType.Info;
-
-        if (exception == null)
+        try
         {
-            cause = title;
-            description = message;
-            if (ErrorFlag)
+            if (exception == null)
             {
-                // User message to be displayed as error
-                Log.WriteWarning(title, message);
-                messageType = MessageType.Warning;
-                severity = 1;
-            }
-            else
-            {
-                // User message is no error
-                messageType = MessageType.Success;
-            }
-        }
-        else
-        {
-            messageType = MessageType.Error;
-
-            // first some recurring specific messages
-            if (exception.Message.Contains("JWTExpired"))
-            {
-                Log.WriteError("Auth Token Error", "JWT expired in session.", exception);
-                // TODO: Improve error handling for jwt expiry / api unreachable, so that no action leads to unhandled exception
-                if (!showReloginDialog)
-                {
-                    showReloginDialog = true;
-                    ShowMessage(userConfig.GetText("jwt_expired_title"), userConfig.GetText("jwt_expired_text"), MessageType.Info, showtime: -1);
-                }
+                await DisplayUserMessage(title, message, errorFlag);
                 return;
             }
-            else if (exception.Message == "no such type exists in the schema: 'cidr'")
-            {
-                // this is the default error message when user's access rights are not sufficient for API access
-                severity = 2;
-                cause = userConfig.GetText("api_access");
-                description = userConfig.GetText("E0004");
-            }
-            else
-            {
-                string role = "";
-                if (apiConnection is GraphQlApiConnection)
-                {
-                    role = ((GraphQlApiConnection)apiConnection).GetActRole();
-                }
-                else
-                {
-                    try
-                    {
-                        JwtReader jwtReader = new(userConfig.User.Jwt);
-                        Task.Run(async () => await jwtReader.Validate());
-                        role = jwtReader.GetRole();
-                    }
-                    catch (Exception) { }
-                }
 
-                Log.WriteError((title != "" ? title : "Unspecified Error"), (message != "" ? message : "Unspecified error occured: "), exception, userConfig.User.Name, role);
-
-                severity = 2;
-                cause = (title != "" ? title : userConfig.GetText("unspecified_error"));
-                description = $"{(message != "" ? message : userConfig.GetText("E0001"))}" + (ErrorFlag ? $": {exception.Message}" : "") + " . " + userConfig.GetText("E0002");
+            if (await HandleSpecialException(exception))
+            {
+                return;
             }
+
+            await DisplayExceptionMessage(exception, title, message, errorFlag);
+        }
+        catch (Exception displayException)
+        {
+            Log.WriteError(
+                "Display UI Message",
+                "Could not display UI message.",
+                displayException);
+        }
+    }
+
+    private async Task<string> GetCurrentRole()
+    {
+        if (apiConnection is GraphQlApiConnection graphQl)
+        {
+            return graphQl.GetActRole();
         }
 
-        ShowMessage(cause, description, messageType);
+        return await TryLoadRole();
+    }
 
-        Task.Run(async () => await AddUiLogEntry(severity, cause, description));
+    private async Task DisplayExceptionMessage(Exception exception, string title, string message, bool errorFlag)
+    {
+        var role = await GetCurrentRole();
+
+        Log.WriteError(
+            string.IsNullOrEmpty(title) ? "Unspecified Error" : title,
+            string.IsNullOrEmpty(message)
+                ? "Unspecified error occured:"
+                : message,
+            exception,
+            userConfig.User.Name,
+            role);
+
+        var cause = string.IsNullOrEmpty(title)
+            ? userConfig.GetText("unspecified_error")
+            : title;
+
+        var description =
+            $"{(string.IsNullOrEmpty(message) ? userConfig.GetText("E0001") : message)}" +
+            $"{(errorFlag ? $": {exception.Message}" : string.Empty)}" +
+            $" . {userConfig.GetText("E0002")}";
+
+        ShowMessage(cause, description, MessageType.Error);
+
+        await AddUiLogEntry(2, cause, description);
+    }
+
+    private async Task DisplayUserMessage(string title, string message, bool errorFlag)
+    {
+        var messageType = errorFlag ? MessageType.Warning : MessageType.Success;
+        var severity = errorFlag ? 1 : 0;
+
+        if (errorFlag)
+        {
+            Log.WriteWarning(title, message);
+        }
+
+        ShowMessage(title, message, messageType);
+        await AddUiLogEntry(severity, title, message);
+    }
+
+    private async Task<bool> HandleSpecialException(Exception exception)
+    {
+        if (exception.Message == "no such type exists in the schema: 'cidr'")
+        {
+            var cause = userConfig.GetText("api_access");
+            var description = userConfig.GetText("E0004");
+
+            ShowMessage(cause, description, MessageType.Error);
+            await AddUiLogEntry(2, cause, description);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<string> TryLoadRole()
+    {
+        try
+        {
+            string? accessToken = await TokenService.GetAccessToken();
+
+            if (string.IsNullOrWhiteSpace(accessToken))
+            {
+                accessToken = "";
+            }
+
+            JwtReader jwt = new JwtReader(accessToken);
+            JwtValidationResult validationResult = await jwt.ValidateToken();
+
+            if (validationResult.IsSuccess)
+            {
+                return jwt.GetRole();
+            }
+
+            return "";
+
+        }
+        catch (Exception)
+        {
+            return "";
+        }
     }
 
     public async Task AddUiLogEntry(int severity, string cause, string description)
@@ -492,7 +655,7 @@
         await AlertHelper.SetAlert(apiConnection, title, message, GlobalConst.kUi, AlertCode.UiError, alertData);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (UIMessageQueTimer is not null)
         {
@@ -502,11 +665,13 @@
         }
 
         alertSubscription?.Dispose();
-        NavigationManager.LocationChanged -= OnLocationChanged;
-        StopTokenRefreshRunner();
-        CircuitHandlerService circuitHandlerService = (CircuitHandlerService)circuitHandler;
+        locationChangingRegistration?.Dispose();
+        apiConnection.OnExecutionModeChanged -= OnExecutionModeChanged;
+        authenticationProvider.AuthenticationStateChanged -= OnAuthenticationStateChanged;
         EventMediator.Unsubscribe<PermissionChangedEvent>(nameof(PermissionChangedEvent));
-        EventMediator.Unsubscribe<JwtExpiredEvent>(nameof(JwtExpiredEvent));
-        EventMediator.Unsubscribe<UserSessionClosedEvent>(nameof(UserSessionClosedEvent));
+        EventMediator.Unsubscribe<ReloginRequiredEvent>(nameof(ReloginRequiredEvent));
+        // awaited instead of stopped synchronously: this runs on the render dispatcher, which a refresh
+        // still in flight needs to finish
+        await tokenRefreshCoordinator.StopAsync();
     }
 }

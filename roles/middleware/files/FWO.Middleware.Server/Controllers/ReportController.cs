@@ -39,15 +39,23 @@ namespace FWO.Middleware.Server.Controllers
             try
             {
                 AuthManager authManager = new(jwtWriter, ldaps, apiConnection);
-                UiUser targetUser = new() { Name = User.FindFirstValue("unique_name") ?? "", Dn = User.FindFirstValue("x-hasura-uuid") ?? "" };
+                // the local user id keeps the rebuilt user in the caller's directory, as the dn alone may exist in several (SEC-11)
+                UiUser targetUser = new()
+                {
+                    Name = User.FindFirstValue("unique_name") ?? "",
+                    Dn = User.FindFirstValue("x-hasura-uuid") ?? "",
+                    DbId = int.TryParse(User.FindFirstValue("x-hasura-user-id"), out int callerDbId) ? callerDbId : 0
+                };
                 string jwt = await authManager.AuthorizeUserAsync(targetUser, validatePassword: false);
                 using ApiConnection apiConnectionUserContext = new GraphQlApiConnection(ConfigFile.ApiServerUri, jwt);
-                apiConnectionUserContext.SetProperRole(User, [Roles.Admin, Roles.Auditor, Roles.Reporter, Roles.ReporterViewAll, Roles.Modeller, Roles.Recertifier]);
+                ReportTemplate template = await ConvertParameters(parameters);
+                ReportType reportType = (ReportType)template.ReportParams.ReportType;
 
                 using GlobalConfig globalConfig = await GlobalConfig.ConstructAsync(jwt);
                 using UserConfig userConfig = await UserConfig.ConstructAsync(globalConfig, apiConnectionUserContext, targetUser.DbId);
+                apiConnectionUserContext.SetBestRoleForReport(User, reportType, userConfig.GetExplicitlyDeniedRoles(reportType));
 
-                ReportBase? report = await ReportGenerator.GenerateFromTemplate(await ConvertParameters(parameters), apiConnectionUserContext, userConfig, DefaultInit.DoNothing);
+                ReportBase? report = await ReportGenerator.GenerateFromTemplate(template, apiConnectionUserContext, userConfig, DefaultInit.DoNothing);
 
                 return report?.ExportToJson() ?? "";
             }

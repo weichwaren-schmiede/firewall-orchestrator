@@ -4,27 +4,78 @@ using FWO.Api.Client.Queries;
 using FWO.Config.Api;
 using FWO.Config.Api.Data;
 using FWO.Data;
+using FWO.Data.Enums;
 using FWO.Data.Modelling;
 using FWO.Data.Workflow;
 using FWO.Middleware.Server;
+using FWO.Data.Flow;
 using NUnit.Framework;
+using System.Text.RegularExpressions;
 
 namespace FWO.Test
 {
     [TestFixture]
     [Parallelizable]
-    internal class ConfigTest
+    internal partial class ConfigTest
     {
+        private static readonly ConfigItem[] ModIconifyFalseConfigItem =
+        [
+            new() { Key = "modIconify", Value = "false", User = 50 }
+        ];
+
+        private static readonly ConfigItem[] kManagementViewGlobalConfig =
+        [
+            new() { Key = "defaultManagementRulebaseView", Value = "true", User = 0 }
+        ];
+        private static readonly ConfigItem[] kGatewayViewPersonalConfig =
+        [
+            new() { Key = "defaultManagementRulebaseView", Value = "false", User = 50 }
+        ];
+
+        /// <summary>Global view changes apply until a personal override exists.</summary>
+        [Test]
+        public void RulesView_InheritsGlobalAndPreservesPersonalOverride()
+        {
+            SimulatedGlobalConfig globalConfig = new();
+            using UserConfig userConfig = UserConfig.ForTextOnly(globalConfig);
+            Assert.That(userConfig.DefaultManagementRulebaseView, Is.False);
+
+            InvokePrivateMethod(userConfig, "OnGlobalConfigChange", globalConfig, kManagementViewGlobalConfig);
+            Assert.That(userConfig.DefaultManagementRulebaseView, Is.True);
+
+            userConfig.RawConfigItems = kGatewayViewPersonalConfig;
+            InvokeUpdate(userConfig, kGatewayViewPersonalConfig);
+            InvokePrivateMethod(userConfig, "OnGlobalConfigChange", globalConfig, kManagementViewGlobalConfig);
+            Assert.That(userConfig.DefaultManagementRulebaseView, Is.False);
+        }
+
+        /// <summary>The personal view setting is persisted using the existing configuration storage.</summary>
+        [Test]
+        public async Task RulesView_PersistsPersonalOverride()
+        {
+            SimulatedGlobalConfig globalConfig = new();
+            using UserConfigApiConnection apiConnection = new(kGatewayViewPersonalConfig);
+            using UserConfig userConfig = new(globalConfig, apiConnection, new UiUser { DbId = 50, Language = "English" });
+            ConfigData editable = await userConfig.GetEditableConfig();
+            editable.DefaultManagementRulebaseView = true;
+
+            await userConfig.WriteToDatabase(editable, apiConnection);
+
+            Assert.That(apiConnection.LastConfigItems.Single().Key, Is.EqualTo("defaultManagementRulebaseView"));
+            Assert.That(apiConnection.LastConfigItems.Single().User, Is.EqualTo(50));
+            Assert.That(userConfig.DefaultManagementRulebaseView, Is.True);
+        }
+
         private sealed class UserConfigApiConnection(ConfigItem[] configItems) : ApiConnection
         {
             public int UpsertConfigCallCount { get; private set; }
             public List<ConfigItem> LastConfigItems { get; private set; } = [];
+            public object? LastGetConfigItemsByUserVariables { get; private set; }
             public bool IsDisposed { get; private set; }
 
             public override void SetAuthHeader(string jwt) { }
             public override void SetRole(string role) { }
             public override void SetBestRole(System.Security.Claims.ClaimsPrincipal user, List<string> targetRoleList) { }
-            public override void SetProperRole(System.Security.Claims.ClaimsPrincipal user, List<string> targetRoleList) { }
             public override void SwitchBack() { }
 
             public override Task<ApiResponse<QueryResponseType>> SendQuerySafeAsync<QueryResponseType>(string query, object? variables = null, string? operationName = null)
@@ -36,6 +87,7 @@ namespace FWO.Test
             {
                 if (typeof(QueryResponseType) == typeof(ConfigItem[]) && query == ConfigQueries.getConfigItemsByUser)
                 {
+                    LastGetConfigItemsByUserVariables = variables;
                     return Task.FromResult((QueryResponseType)(object)configItems);
                 }
                 if (typeof(QueryResponseType) == typeof(List<UiText>) && query == ConfigQueries.getCustomTextsPerLanguage)
@@ -90,13 +142,38 @@ namespace FWO.Test
             SimulatedGlobalConfig globalConfig = new();
             globalConfig.RawConfigItems =
             [
-                new() { Key = "reqOwnerBased", Value = "true", User = 0 }
+                new() { Key = "reqOwnerBased", Value = "true", User = 0 },
+                new() { Key = "reqVisibilityBased", Value = "true", User = 0 }
             ];
 
             using UserConfigApiConnection apiConnection = new([]);
             UserConfig userConfig = new(globalConfig, apiConnection, new UiUser { DbId = 50, Language = "English" });
 
             Assert.That(userConfig.ReqOwnerBased, Is.True);
+            Assert.That(userConfig.ReqVisibilityBased, Is.True);
+            Assert.That(apiConnection.LastGetConfigItemsByUserVariables?.GetType().GetProperty("user")?.GetValue(apiConnection.LastGetConfigItemsByUserVariables), Is.EqualTo(50));
+            Assert.That(apiConnection.LastGetConfigItemsByUserVariables?.GetType().GetProperty("User"), Is.Null);
+        }
+
+        [Test]
+        public void GlobalConfigChange_DoesNotOverwritePersonalModIconifyOverride()
+        {
+            SimulatedGlobalConfig globalConfig = new()
+            {
+                ModIconify = true
+            };
+
+            UserConfig userConfig = UserConfig.ForTextOnly(globalConfig);
+            userConfig.RawConfigItems =
+            [
+                ModIconifyFalseConfigItem[0]
+            ];
+
+            InvokeUpdate(userConfig, ModIconifyFalseConfigItem);
+
+            InvokePrivateMethod(userConfig, "OnGlobalConfigChange", globalConfig, ModIconifyFalseConfigItem);
+
+            Assert.That(userConfig.ModIconify, Is.False);
         }
 
         [Test]
@@ -114,12 +191,14 @@ namespace FWO.Test
             SimulatedGlobalConfig globalConfig = new();
             globalConfig.RawConfigItems =
             [
-                new() { Key = "reqOwnerBased", Value = "true", User = 0 }
+                new() { Key = "reqOwnerBased", Value = "true", User = 0 },
+                new() { Key = "reqVisibilityBased", Value = "true", User = 0 }
             ];
 
             UserConfig userConfig = UserConfig.ForTextOnly(globalConfig);
 
             Assert.That(userConfig.ReqOwnerBased, Is.False);
+            Assert.That(userConfig.ReqVisibilityBased, Is.False);
         }
 
         [Test]
@@ -127,11 +206,12 @@ namespace FWO.Test
         {
             SimulatedGlobalConfig globalConfig = new();
             using UserConfigApiConnection apiConnection =
-                new([new() { Key = "reqOwnerBased", Value = "true", User = 0 }]);
+                new([new() { Key = "reqOwnerBased", Value = "true", User = 0 }, new() { Key = "reqVisibilityBased", Value = "true", User = 0 }]);
 
             UserConfig userConfig = UserConfig.ForGlobalSettings(globalConfig, apiConnection);
 
             Assert.That(userConfig.ReqOwnerBased, Is.True);
+            Assert.That(userConfig.ReqVisibilityBased, Is.True);
         }
 
         [Test]
@@ -220,6 +300,7 @@ namespace FWO.Test
             globalConfig.RawConfigItems =
             [
                 new() { Key = "reqOwnerBased", Value = "true", User = 0 },
+                new() { Key = "reqVisibilityBased", Value = "true", User = 0 },
                 new() { Key = "elementsPerFetch", Value = "777", User = 0 }
             ];
 
@@ -228,7 +309,23 @@ namespace FWO.Test
             UserConfig userConfig = new(globalConfig, apiConnection, new UiUser { DbId = 50, Language = "English" });
 
             Assert.That(userConfig.ReqOwnerBased, Is.True);
+            Assert.That(userConfig.ReqVisibilityBased, Is.True);
             Assert.That(userConfig.ElementsPerFetch, Is.EqualTo(55));
+        }
+
+        [Test]
+        public void Constructor_UsesGlobalUserConfigValueWhenUserHasNoSpecificConfig()
+        {
+            SimulatedGlobalConfig globalConfig = new();
+            globalConfig.RawConfigItems =
+            [
+                new() { Key = "elementsPerFetch", Value = "777", User = 0 }
+            ];
+
+            using UserConfigApiConnection apiConnection = new([]);
+            UserConfig userConfig = new(globalConfig, apiConnection, new UiUser { DbId = 50, Language = "English" });
+
+            Assert.That(userConfig.ElementsPerFetch, Is.EqualTo(777));
         }
 
         [Test]
@@ -259,6 +356,60 @@ namespace FWO.Test
                 Assert.That(globalConfig.WelcomeMessage, Is.EqualTo("new"));
                 Assert.That(globalConfig.RawConfigItems.First(item => item.Key == "welcomeMessage").Value, Is.EqualTo("new"));
                 Assert.That(globalConfig.RawConfigItems.First(item => item.Key == "importSleepTime").Value, Is.EqualTo("40"));
+            });
+        }
+
+        [Test]
+        public async Task WriteToDatabase_PersistsDesignatedZoneMatrixSelection()
+        {
+            SimulatedGlobalConfig globalConfig = new()
+            {
+                DesignatedZoneMatrixId = 0,
+                RawConfigItems =
+                [
+                    new() { Key = "designatedZoneMatrix", Value = "0", User = 0 }
+                ]
+            };
+            ConfigData editableConfig = await globalConfig.GetEditableConfig();
+            editableConfig.DesignatedZoneMatrixId = 17;
+
+            using UserConfigApiConnection apiConnection = new([]);
+            await globalConfig.WriteToDatabase(editableConfig, apiConnection);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(apiConnection.UpsertConfigCallCount, Is.EqualTo(1));
+                Assert.That(apiConnection.LastConfigItems, Has.Count.EqualTo(1));
+                Assert.That(apiConnection.LastConfigItems[0].Key, Is.EqualTo("designatedZoneMatrix"));
+                Assert.That(apiConnection.LastConfigItems[0].Value, Is.EqualTo("17"));
+                Assert.That(globalConfig.DesignatedZoneMatrixId, Is.EqualTo(17));
+            });
+        }
+
+        [Test]
+        public async Task WriteToDatabase_PersistsComplianceDiffExistingViolationFilter()
+        {
+            SimulatedGlobalConfig globalConfig = new()
+            {
+                ComplianceDiffFilterExistingViolations = false,
+                RawConfigItems =
+                [
+                    new() { Key = "complianceDiffFilterExistingViolations", Value = "false", User = 0 }
+                ]
+            };
+            ConfigData editableConfig = await globalConfig.GetEditableConfig();
+            editableConfig.ComplianceDiffFilterExistingViolations = true;
+
+            using UserConfigApiConnection apiConnection = new([]);
+            await globalConfig.WriteToDatabase(editableConfig, apiConnection);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(apiConnection.UpsertConfigCallCount, Is.EqualTo(1));
+                Assert.That(apiConnection.LastConfigItems, Has.Count.EqualTo(1));
+                Assert.That(apiConnection.LastConfigItems[0].Key, Is.EqualTo("complianceDiffFilterExistingViolations"));
+                Assert.That(apiConnection.LastConfigItems[0].Value, Is.EqualTo("True"));
+                Assert.That(globalConfig.ComplianceDiffFilterExistingViolations, Is.True);
             });
         }
 
@@ -296,10 +447,107 @@ namespace FWO.Test
         }
 
         [Test]
-        public void FlowSyncSubscription_ContainsFlowSyncSleepTime()
+        public void FlowSyncSubscription_ContainsFlowSyncConfigSettings()
         {
             Assert.That(ConfigQueries.subscribeFlowSyncConfigChanges, Does.Contain("flowSyncSleepTime"));
+            Assert.That(ConfigQueries.subscribeFlowSyncConfigChanges, Does.Contain("flowNamingSourceManagementRanking"));
         }
+
+        [Test]
+        public void FlowCatalogSubscription_ContainsZoneGroupNamePatterns()
+        {
+            Assert.That(ConfigQueries.subscribeFlowCatalogConfigChanges, Does.Contain("flowZoneGroupNamePatterns"));
+        }
+
+        [Test]
+        public void LogDataImportSubscription_ContainsIntervalUnit()
+        {
+            Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("importLogDataSleepTimeUnit"));
+        }
+
+        [Test]
+        public void LogDataImportSubscription_ContainsSettingsUsedByRunningImports()
+        {
+            Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("importLogDataMaxEntries"));
+            Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("allowLogDataPortWithoutProtocol"));
+            Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("replaceExistingLogData"));
+            Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("resolveLogDataDns"));
+            Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("logDataRetentionDays"));
+        }
+
+        [Test]
+        public void ImportSubscriptions_ContainTheScriptTimeoutOfEveryScriptedImport()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(ConfigQueries.subscribeImportLogDataConfigChanges, Does.Contain("importScriptTimeout"));
+                Assert.That(ConfigQueries.subscribeImportAppDataConfigChanges, Does.Contain("importScriptTimeout"));
+                Assert.That(ConfigQueries.subscribeImportIpDataConfigChanges, Does.Contain("importScriptTimeout"));
+            });
+        }
+
+        [Test]
+        public void ConfigData_DefaultsTheImportScriptTimeoutToAnHour()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ImportScriptTimeout, Is.EqualTo(60));
+        }
+
+        [Test]
+        public void ConfigData_DefaultsLogDataImportIntervalUnitToHours()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ImportLogDataSleepTimeUnit, Is.EqualTo(LogDataImportIntervalUnit.Hours));
+        }
+
+        [Test]
+        public void ConfigData_EnablesLogDataReplacementByDefault()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ReplaceExistingLogData, Is.True);
+        }
+
+        [Test]
+        public void ComplianceCheckSubscription_ContainsDesignatedZoneMatrix()
+        {
+            Assert.That(ConfigQueries.subscribeComplianceCheckConfigChanges, Does.Contain("designatedZoneMatrix"));
+        }
+
+        [Test]
+        public void ComplianceCheckSubscription_LimitCoversAllTrackedConfigKeys()
+        {
+            string subscription = ConfigQueries.subscribeComplianceCheckConfigChanges;
+            MatchCollection configKeyFilters = ConfigKeyFiltersRegex().Matches(subscription);
+            int trackedConfigKeyCount = configKeyFilters
+                .SelectMany(match => QuotedValueRegex().Matches(match.Groups["body"].Value).Select(quotedValue => quotedValue.Groups[1].Value))
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            int limitStart = subscription.IndexOf("limit:", StringComparison.Ordinal);
+
+            Assert.That(limitStart, Is.GreaterThanOrEqualTo(0), "Subscription limit not found.");
+
+            string limitText = subscription[(limitStart + "limit:".Length)..].TrimStart();
+            int limitEnd = limitText.IndexOfAny(['\r', '\n', ')']);
+            string limitValue = limitEnd >= 0 ? limitText[..limitEnd] : limitText;
+
+            Assert.That(int.Parse(limitValue), Is.GreaterThanOrEqualTo(trackedConfigKeyCount));
+        }
+
+        [Test]
+        public void ChangeIdCustomFieldKeysAreIncludedInRelevantSubscriptions()
+        {
+            Assert.That(ConfigQueries.subscribeComplianceCheckConfigChanges, Does.Contain("CustomFieldChangeIdKey"));
+            Assert.That(ConfigQueries.subscribeDailyCheckConfigChanges, Does.Contain("CustomFieldChangeIdKey"));
+        }
+
+        [GeneratedRegex(@"config_key\s*:\s*\{(?<body>.*?)\}", RegexOptions.Singleline)]
+        private static partial Regex ConfigKeyFiltersRegex();
+
+        [GeneratedRegex("\"([^\"]+)\"")]
+        private static partial Regex QuotedValueRegex();
 
         [Test]
         public void ConfigData_DefaultsFlowSyncSleepTimeToDisabled()
@@ -307,6 +555,59 @@ namespace FWO.Test
             ConfigData configData = new();
 
             Assert.That(configData.FlowSyncSleepTime, Is.Zero);
+        }
+
+        [Test]
+        public void ConfigData_DefaultsReqConsiderBundlingToFalse()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ReqConsiderBundling, Is.False);
+        }
+
+        [Test]
+        public void ConfigData_DefaultsReqVisibilityBasedToFalse()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ReqVisibilityBased, Is.False);
+        }
+
+        [Test]
+        public void ConfigData_DefaultsDesignatedZoneMatrixIdToZero()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.DesignatedZoneMatrixId, Is.Zero);
+        }
+
+        [Test]
+        public void ConfigData_DefaultsComplianceDiffExistingViolationFilterToFalse()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ComplianceDiffFilterExistingViolations, Is.False);
+        }
+
+        [Test]
+        public void ConfigData_DefaultsChangeIdCustomFieldKeys()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.CustomFieldChangeIdKey, Is.EqualTo("[\"field-2\",\"ChangeID\"]"));
+        }
+
+        [Test]
+        public void Update_ParsesReqConsiderBundling()
+        {
+            SimulatedUserConfig userConfig = new();
+
+            InvokeUpdate(userConfig,
+            [
+                new() { Key = "reqConsiderBundling", Value = "True", User = 0 }
+            ]);
+
+            Assert.That(userConfig.ReqConsiderBundling, Is.True);
         }
 
         [Test]
@@ -340,6 +641,92 @@ namespace FWO.Test
             ConfigData configData = new();
 
             Assert.That(configData.FlowNamingSourceManagementRanking, Is.EqualTo("[]"));
+        }
+
+        [Test]
+        public void ConfigData_DefaultsFlowZoneGroupNamePatternsToAnEmptyList()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.FlowZoneGroupNamePatterns, Is.EqualTo("[]"));
+            Assert.That(FlowZoneGroupMatcher.ParsePatterns(configData.FlowZoneGroupNamePatterns), Is.Empty);
+        }
+
+        [Test]
+        public void ConfigData_DefaultsReducedProtocolSetProtocolsToCurrentSelection()
+        {
+            ConfigData configData = new();
+
+            Assert.That(configData.ReducedProtocolSetProtocols, Is.EqualTo("""["tcp","udp","icmp","esp"]"""));
+        }
+
+        [Test]
+        public void ConfigData_ReducedProtocolSetProtocolsRoundTripAsJson()
+        {
+            ConfigData configData = new()
+            {
+                ReducedProtocolSetProtocols = """["tcp","udp","icmp","esp"]"""
+            };
+
+            List<string>? parsed = System.Text.Json.JsonSerializer.Deserialize<List<string>>(configData.ReducedProtocolSetProtocols);
+
+            Assert.That(parsed, Is.EqualTo(["tcp", "udp", "icmp", "esp"]));
+        }
+
+        [Test]
+        public void RuleRecognitionOption_DefaultsMatchCurrentSelectionLogic()
+        {
+            RuleRecognitionOption option = new();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(option.NwRegardIp, Is.True);
+                Assert.That(option.NwRegardName, Is.False);
+                Assert.That(option.NwRegardGroupName, Is.False);
+                Assert.That(option.NwResolveGroup, Is.False);
+                Assert.That(option.NwSeparateGroupAnalysis, Is.True);
+                Assert.That(option.SvcRegardPortAndProt, Is.True);
+                Assert.That(option.SvcRegardName, Is.False);
+                Assert.That(option.SvcRegardGroupName, Is.False);
+                Assert.That(option.SvcResolveGroup, Is.True);
+                Assert.That(option.SvcSplitPortRanges, Is.False);
+            });
+        }
+
+        [Test]
+        public void RuleRecognitionOption_SerializesAndDeserializesWithoutLoss()
+        {
+            RuleRecognitionOption option = new()
+            {
+                NwRegardIp = false,
+                NwRegardName = true,
+                NwRegardGroupName = true,
+                NwResolveGroup = true,
+                NwSeparateGroupAnalysis = false,
+                SvcRegardPortAndProt = false,
+                SvcRegardName = true,
+                SvcRegardGroupName = true,
+                SvcResolveGroup = false,
+                SvcSplitPortRanges = true
+            };
+
+            string serialized = System.Text.Json.JsonSerializer.Serialize(option);
+            RuleRecognitionOption? parsed = System.Text.Json.JsonSerializer.Deserialize<RuleRecognitionOption>(serialized);
+
+            Assert.That(parsed, Is.Not.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(parsed!.NwRegardIp, Is.False);
+                Assert.That(parsed.NwRegardName, Is.True);
+                Assert.That(parsed.NwRegardGroupName, Is.True);
+                Assert.That(parsed.NwResolveGroup, Is.True);
+                Assert.That(parsed.NwSeparateGroupAnalysis, Is.False);
+                Assert.That(parsed.SvcRegardPortAndProt, Is.False);
+                Assert.That(parsed.SvcRegardName, Is.True);
+                Assert.That(parsed.SvcRegardGroupName, Is.True);
+                Assert.That(parsed.SvcResolveGroup, Is.False);
+                Assert.That(parsed.SvcSplitPortRanges, Is.True);
+            });
         }
 
         [Test]
@@ -438,6 +825,14 @@ namespace FWO.Test
                 ?? throw new MissingFieldException(target.GetType().FullName, fieldName);
 
             field.SetValue(target, value);
+        }
+
+        private static void InvokePrivateMethod(object target, string methodName, params object?[] args)
+        {
+            MethodInfo method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new MissingMethodException(target.GetType().FullName, methodName);
+
+            method.Invoke(target, args);
         }
     }
 }

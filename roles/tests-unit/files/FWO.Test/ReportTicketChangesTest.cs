@@ -22,7 +22,6 @@ namespace FWO.Test
             public override void SetAuthHeader(string jwt) { }
             public override void SetRole(string role) { }
             public override void SetBestRole(System.Security.Claims.ClaimsPrincipal user, List<string> targetRoleList) { }
-            public override void SetProperRole(System.Security.Claims.ClaimsPrincipal user, List<string> targetRoleList) { }
             public override void SwitchBack() { }
             public override Task<ApiResponse<QueryResponseType>> SendQuerySafeAsync<QueryResponseType>(string query, object? variables = null, string? operationName = null)
             {
@@ -44,17 +43,11 @@ namespace FWO.Test
                 {
                     return Task.FromResult((QueryResponseType)(object)(ownerTicketIds ?? []));
                 }
-                if (typeof(QueryResponseType) == typeof(List<GlobalStateMatrixHelper>))
+                if (typeof(QueryResponseType) == typeof(List<WorkflowConfiguration>))
                 {
-                    return Task.FromResult((QueryResponseType)(object)new List<GlobalStateMatrixHelper>
-                    {
-                        new()
-                        {
-                            ConfData = """
+                    return Task.FromResult((QueryResponseType)(object)StateMatrixConfigurationTestHelper.FromLegacyJson("""
                                 {"config_value":{"request":{"matrix":{},"derived_states":{},"lowest_input_state":0,"lowest_start_state":0,"lowest_end_state":49,"active":true},"approval":{"matrix":{},"derived_states":{},"lowest_input_state":49,"lowest_start_state":60,"lowest_end_state":99,"active":true},"implementation":{"matrix":{},"derived_states":{},"lowest_input_state":99,"lowest_start_state":210,"lowest_end_state":249,"active":true}}}
-                                """
-                        }
-                    });
+                                """));
                 }
                 throw new NotImplementedException();
             }
@@ -139,6 +132,88 @@ namespace FWO.Test
 
             Assert.That(report.ReportData.Tickets.Select(ticket => ticket.Id), Is.EqualTo(new List<long> { 1001 }));
             Assert.That(report.ReportData.ElementsCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        [Parallelizable]
+        public async Task TicketReport_Generate_FiltersMixedAuditorUserByOwnerVisibility_WhenRunningInUserRoleMode()
+        {
+            ReportTemplate template = new();
+            template.ReportParams.ReportType = (int)ReportType.TicketReport;
+            SimulatedUserConfig userConfig = new()
+            {
+                ReqOwnerBased = true
+            };
+            userConfig.User.DbId = 50;
+            userConfig.User.Roles = [Roles.Auditor, Roles.Approver];
+            userConfig.User.Ownerships = [4];
+            userConfig.SetExecutionMode(GlobalConst.kUserRolesSelection);
+            ReportBase report = ReportBase.ConstructReport(template, userConfig);
+            List<WfTicket> tickets =
+            [
+                new()
+                {
+                    Id = 1001,
+                    Title = "Owned ticket",
+                    StateId = 9,
+                    Tasks = [new WfReqTask()],
+                    Requester = new UiUser { Name = "owner-visible", DbId = 99 }
+                },
+                new()
+                {
+                    Id = 1002,
+                    Title = "Foreign ticket",
+                    StateId = 9,
+                    Tasks = [new WfReqTask()],
+                    Requester = new UiUser { Name = "foreign", DbId = 99 }
+                }
+            ];
+
+            await report.Generate(0, new ReportTicketChangesApiConnection(tickets, [new() { Id = 1001 }]), _ => Task.CompletedTask, CancellationToken.None);
+
+            Assert.That(report.ReportData.Tickets.Select(ticket => ticket.Id), Is.EqualTo(new List<long> { 1001 }));
+            Assert.That(report.ReportData.ElementsCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        [Parallelizable]
+        public async Task TicketReport_Generate_SkipsOwnerFilteringForMixedAuditorUser_WhenRunningInAuditorMode()
+        {
+            ReportTemplate template = new();
+            template.ReportParams.ReportType = (int)ReportType.TicketReport;
+            SimulatedUserConfig userConfig = new()
+            {
+                ReqOwnerBased = true
+            };
+            userConfig.User.DbId = 50;
+            userConfig.User.Roles = [Roles.Auditor, Roles.Approver];
+            userConfig.User.Ownerships = [4];
+            userConfig.SetExecutionMode(Roles.Auditor);
+            ReportBase report = ReportBase.ConstructReport(template, userConfig);
+            List<WfTicket> tickets =
+            [
+                new()
+                {
+                    Id = 1001,
+                    Title = "Owned ticket",
+                    StateId = 9,
+                    Tasks = [new WfReqTask()],
+                    Requester = new UiUser { Name = "owner-visible", DbId = 99 }
+                },
+                new()
+                {
+                    Id = 1002,
+                    Title = "Foreign ticket",
+                    StateId = 9,
+                    Tasks = [new WfReqTask()],
+                    Requester = new UiUser { Name = "foreign", DbId = 99 }
+                }
+            ];
+
+            await report.Generate(0, new ReportTicketChangesApiConnection(tickets, [new() { Id = 1001 }]), _ => Task.CompletedTask, CancellationToken.None);
+
+            Assert.That(report.ReportData.Tickets.Select(ticket => ticket.Id), Is.EqualTo(new List<long> { 1001, 1002 }));
+            Assert.That(report.ReportData.ElementsCount, Is.EqualTo(2));
         }
 
         [Test]
@@ -715,7 +790,7 @@ namespace FWO.Test
         {
             ReportTemplate template = new();
             template.ReportParams.ReportType = (int)ReportType.TicketReport;
-            template.ReportParams.WorkflowFilter.LabelFilter = new() { Name = "policy_check", Mode = WorkflowLabelFilterMode.display_only };
+            template.ReportParams.WorkflowFilter.AddInfoFilter = new() { Name = "policy_check", Mode = AddInfoFilterMode.display_only };
             ReportBase report = ReportBase.ConstructReport(template, new SimulatedUserConfig());
             List<WfTicket> tickets =
             [
@@ -758,7 +833,7 @@ namespace FWO.Test
             template.ReportParams.WorkflowFilter.StateIds = [9];
             template.ReportParams.WorkflowFilter.DetailedView = true;
             template.ReportParams.WorkflowFilter.ShowFullTicket = false;
-            template.ReportParams.WorkflowFilter.LabelFilter = new() { Name = "policy_check", Mode = WorkflowLabelFilterMode.existing };
+            template.ReportParams.WorkflowFilter.AddInfoFilter = new() { Name = "policy_check", Mode = AddInfoFilterMode.existing };
             ReportBase report = ReportBase.ConstructReport(template, new SimulatedUserConfig());
 
             await report.Generate(0, new ReportTicketChangesApiConnection([]), _ => Task.CompletedTask, CancellationToken.None);
@@ -769,7 +844,7 @@ namespace FWO.Test
             Assert.That(html, Does.Contain("Task type: access"));
             Assert.That(html, Does.Contain("Phase: Implementation"));
             Assert.That(html, Does.Contain("State: done"));
-            Assert.That(html, Does.Contain("Label: policy_check (existing)"));
+            Assert.That(html, Does.Contain("Add. Info: policy_check (existing)"));
         }
 
         [Test]
@@ -779,7 +854,7 @@ namespace FWO.Test
             ReportTemplate template = new();
             template.ReportParams.ReportType = (int)ReportType.TicketReport;
             template.ReportParams.WorkflowFilter.DetailedView = false;
-            template.ReportParams.WorkflowFilter.LabelFilter = new() { Name = "policy_check", Mode = WorkflowLabelFilterMode.existing };
+            template.ReportParams.WorkflowFilter.AddInfoFilter = new() { Name = "policy_check", Mode = AddInfoFilterMode.existing };
             ReportBase report = ReportBase.ConstructReport(template, new SimulatedUserConfig());
             List<WfTicket> tickets =
             [

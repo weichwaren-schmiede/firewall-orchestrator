@@ -1,21 +1,33 @@
 using System.Globalization;
-using System.Threading;
+using System.Net;
 using FWO.Api.Client;
+using FWO.Api.Client.ExceptionHandling;
 using FWO.Api.Client.Queries;
+using FWO.Config.Api;
+using FWO.Config.Api.Data;
 using FWO.Data;
 using FWO.Data.Flow;
+using FWO.Data.Middleware;
+using FWO.Logging;
 using FWO.Middleware.Server.Responses;
+using FWO.Services.Workflow;
+using NetTools;
 
 namespace FWO.Middleware.Server.Services;
 
 /// <summary>
 /// Represents the FlowCatalogService type.
 /// </summary>
-public sealed class FlowCatalogService
+public sealed class FlowCatalogService : IFlowGroupResolver, IDisposable
 {
     private readonly ApiConnection apiConnection;
+    private readonly GlobalConfig globalConfig;
+    private readonly ApiSubscription? configSubscription;
     private readonly SemaphoreSlim ipProtocolCacheLock = new(1, 1);
+    private readonly object zonePatternCacheLock = new();
     private IpProtocolCache? ipProtocolCache;
+    private IReadOnlyList<FlowZoneGroupPattern> zonePatterns = [];
+    private string? parsedZonePatternConfig;
 
     private sealed class IpProtocolCache(Dictionary<int, string> names, Dictionary<string, int> idsByName)
     {
@@ -26,9 +38,59 @@ public sealed class FlowCatalogService
     /// <summary>
     /// Initializes a new instance of the type.
     /// </summary>
-    public FlowCatalogService(ApiConnection apiConnection)
+    public FlowCatalogService(ApiConnection apiConnection, GlobalConfig globalConfig)
     {
         this.apiConnection = apiConnection;
+        this.globalConfig = globalConfig;
+        try
+        {
+            configSubscription = this.apiConnection.GetSubscription<ConfigItem[]>(
+                GraphqlExceptionHandler.Handle,
+                OnGlobalConfigChange,
+                ConfigQueries.subscribeFlowCatalogConfigChanges);
+        }
+        catch (Exception exception)
+        {
+            Log.WriteError("Flow catalog config", "Could not start flow-catalog config subscription.", exception);
+        }
+    }
+
+    /// <summary>
+    /// Applies refreshed flow-catalog config values to the shared config snapshot.
+    /// </summary>
+    private void OnGlobalConfigChange(ConfigItem[] configItems)
+    {
+        globalConfig.MergeSubscriptionUpdateHandler(configItems);
+    }
+
+    /// <summary>
+    /// Returns the configured zone name patterns, parsing the config value only when it changed.
+    /// The parse reports unusable entries to the log, so it must not run once per request.
+    /// The cache is shared by every caller of this singleton and the list is replaced rather than modified.
+    /// The list is handed out read-only, but callers must treat its mutable pattern elements as immutable.
+    /// </summary>
+    /// <returns>The configured zone name patterns.</returns>
+    private IReadOnlyList<FlowZoneGroupPattern> GetZonePatterns()
+    {
+        string serializedPatterns = globalConfig.FlowZoneGroupNamePatterns ?? "";
+
+        lock (zonePatternCacheLock)
+        {
+            if (!string.Equals(serializedPatterns, parsedZonePatternConfig, StringComparison.Ordinal))
+            {
+                zonePatterns = FlowZoneGroupMatcher.ParsePatterns(serializedPatterns);
+                parsedZonePatternConfig = serializedPatterns;
+            }
+
+            return zonePatterns;
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        configSubscription?.Dispose();
+        ipProtocolCacheLock.Dispose();
     }
 
     /// <summary>
@@ -50,6 +112,34 @@ public sealed class FlowCatalogService
     }
 
     /// <summary>
+    /// Returns the address groups split into groups that are not zones and groups that are zones.
+    /// Zone groups are identified by the zone name patterns configured in the general flow settings.
+    /// </summary>
+    /// <param name="visibleInRequest">Optional filter for the request module visibility.</param>
+    /// <returns>The address groups separated into standard groups and zone groups.</returns>
+    public async Task<SeparatedAddressGroupsResponse> GetSeparatedAddressGroupsAsync(bool? visibleInRequest)
+    {
+        List<FlowNwGroup> flowGroups = await LoadFlowNwGroupsAsync(visibleInRequest);
+        IReadOnlyList<FlowZoneGroupPattern> configuredZonePatterns = GetZonePatterns();
+        SeparatedAddressGroupsResponse separatedGroups = new();
+
+        foreach (FlowNwGroup flowGroup in flowGroups)
+        {
+            AddressGroupResponse groupResponse = ToAddressGroupResponse(flowGroup);
+            if (FlowZoneGroupMatcher.IsZoneGroupName(flowGroup.Name, configuredZonePatterns))
+            {
+                separatedGroups.ZoneGroups.Add(groupResponse);
+            }
+            else
+            {
+                separatedGroups.StandardGroups.Add(groupResponse);
+            }
+        }
+
+        return separatedGroups;
+    }
+
+    /// <summary>
     /// Performs the GetServiceObjectsAsync operation.
     /// </summary>
     public async Task<List<ServiceObjectResponse>> GetServiceObjectsAsync(bool? visibleInRequest)
@@ -66,6 +156,36 @@ public sealed class FlowCatalogService
     {
         List<FlowSvcGroup> flowGroups = await LoadFlowSvcGroupsAsync(visibleInRequest);
         return flowGroups.Select(ToServiceGroupResponse).ToList();
+    }
+
+    /// <summary>
+    /// Resolves only the requested, request-visible Flow groups and their active members.
+    /// </summary>
+    public async Task<FlowGroupResolutionResult> ResolveFlowGroupMembersAsync(FlowGroupResolutionParameters parameters)
+    {
+        parameters.NetworkGroupIds ??= [];
+        parameters.NetworkGroupNames ??= [];
+        parameters.ServiceGroupIds ??= [];
+        parameters.ServiceGroupNames ??= [];
+        Task<List<FlowNwGroup>> networkGroupsTask = parameters.NetworkGroupIds.Count == 0 && parameters.NetworkGroupNames.Count == 0
+            ? Task.FromResult<List<FlowNwGroup>>([])
+            : apiConnection.SendQueryAsync<List<FlowNwGroup>>(FlowQueries.getFlowAddressGroups, BuildGroupResolutionVariables(
+                "nwgrp_id", parameters.NetworkGroupIds, parameters.NetworkGroupNames));
+        Task<List<FlowSvcGroup>> serviceGroupsTask = parameters.ServiceGroupIds.Count == 0 && parameters.ServiceGroupNames.Count == 0
+            ? Task.FromResult<List<FlowSvcGroup>>([])
+            : apiConnection.SendQueryAsync<List<FlowSvcGroup>>(FlowQueries.getFlowServiceGroups, BuildGroupResolutionVariables(
+                "svcgrp_id", parameters.ServiceGroupIds, parameters.ServiceGroupNames));
+        await Task.WhenAll(networkGroupsTask, serviceGroupsTask);
+
+        return new FlowGroupResolutionResult
+        {
+            NetworkGroups = ResolveGroupMatches(await networkGroupsTask ?? [], parameters.NetworkGroupIds, parameters.NetworkGroupNames)
+                .Select(ToNetworkGroupResolution)
+                .ToList(),
+            ServiceGroups = ResolveGroupMatches(await serviceGroupsTask ?? [], parameters.ServiceGroupIds, parameters.ServiceGroupNames)
+                .Select(ToServiceGroupResolution)
+                .ToList()
+        };
     }
 
     /// <summary>
@@ -94,7 +214,7 @@ public sealed class FlowCatalogService
     /// <summary>
     /// Performs the GetServiceObjectIdAsync operation.
     /// </summary>
-    public async Task<ServiceObjectIdResponse> GetServiceObjectIdAsync(string protocol, int portStart, int portEnd, bool? visibleInRequest)
+    public async Task<ServiceObjectIdResponse> GetServiceObjectIdAsync(string protocol, int? portStart, int? portEnd, bool? visibleInRequest)
     {
         int? protocolId = await ResolveProtocolIdAsync(protocol);
         if (!protocolId.HasValue)
@@ -115,11 +235,113 @@ public sealed class FlowCatalogService
             : new ServiceObjectIdResponse { Id = flowObject.Id, Name = flowObject.Name };
     }
 
+    /// <summary>
+    /// Performs the GetTimeObjectIdAsync operation.
+    /// </summary>
+    public async Task<TimeObjectIdResponse> GetTimeObjectIdAsync(DateTimeOffset? startTime, DateTimeOffset? endTime, bool? visibleInRequest)
+    {
+        List<FlowTimeObject> result = await apiConnection.SendQueryAsync<List<FlowTimeObject>>(
+            FlowQueries.getFlowTimeObjectId,
+            BuildLookupQueryVariables(visibleInRequest, ("start_time", startTime), ("end_time", endTime))) ?? [];
+        FlowTimeObject? flowObject = result.FirstOrDefault();
+        return flowObject == null
+            ? new TimeObjectIdResponse()
+            : new TimeObjectIdResponse { Id = flowObject.Id, Name = flowObject.Name ?? string.Empty };
+    }
+
     private async Task<List<FlowNwObject>> LoadFlowNwObjectsAsync(bool? visibleInRequest)
     {
         return await apiConnection.SendQueryAsync<List<FlowNwObject>>(
             FlowQueries.getFlowAddressObjects,
             BuildCatalogQueryVariables(visibleInRequest)) ?? [];
+    }
+
+    private static Dictionary<string, object> BuildGroupResolutionVariables(string idFieldName, IEnumerable<long> ids, IEnumerable<string> names)
+    {
+        List<Dictionary<string, object>> selectors = ids.Select(id =>
+                new Dictionary<string, object> { [idFieldName] = BuildLookupExpression(id) })
+            .Concat(names.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name =>
+                new Dictionary<string, object> { ["name"] = BuildLookupExpression(name) }))
+            .ToList();
+        return new Dictionary<string, object>
+        {
+            ["where"] = new Dictionary<string, object>
+            {
+                ["show_in_request_module"] = BuildLookupExpression(true),
+                ["_or"] = selectors
+            }
+        };
+    }
+
+    private static bool IsActiveAndVisible(FlowGroup group)
+    {
+        return FlowObjectEligibility.IsRequestable(group);
+    }
+
+    private static FlowNetworkGroupResolution ToNetworkGroupResolution(FlowNwGroup group)
+    {
+        return new FlowNetworkGroupResolution
+        {
+            Id = group.Id,
+            Name = group.Name,
+            Members = group.NwGroupMembers
+                .Where(member => FlowObjectEligibility.IsRequestable(member.NwObject))
+                .Select(member => new FlowNetworkMemberResolution
+                {
+                    Id = member.NwObject.Id,
+                    Name = member.NwObject.Name ?? string.Empty,
+                    IpStart = member.NwObject.IpStart ?? string.Empty,
+                    IpEnd = member.NwObject.IpEnd ?? string.Empty
+                })
+                .ToList()
+        };
+    }
+
+    private static FlowServiceGroupResolution ToServiceGroupResolution(FlowSvcGroup group)
+    {
+        return new FlowServiceGroupResolution
+        {
+            Id = group.Id,
+            Name = group.Name,
+            Members = group.SvcGroupMembers
+                .Where(member => FlowObjectEligibility.IsRequestable(member.SvcObject))
+                .Select(member => new FlowServiceMemberResolution
+                {
+                    Id = member.SvcObject.Id,
+                    Name = member.SvcObject.Name,
+                    PortStart = member.SvcObject.PortStart,
+                    PortEnd = member.SvcObject.PortEnd,
+                    ProtoId = member.SvcObject.ProtoId
+                })
+                .ToList()
+        };
+    }
+
+    private static IEnumerable<TGroup> ResolveGroupMatches<TGroup>(IEnumerable<TGroup> groups, IEnumerable<long> ids, IEnumerable<string> names)
+        where TGroup : FlowGroup
+    {
+        List<TGroup> activeGroups = groups.Where(IsActiveAndVisible).ToList();
+        List<TGroup> idMatches = activeGroups.Where(group => ids.Contains(group.Id)).ToList();
+        foreach (TGroup group in idMatches)
+        {
+            yield return group;
+        }
+
+        foreach (string name in names.Where(name => !string.IsNullOrWhiteSpace(name)))
+        {
+            if (idMatches.Any(group => string.Equals(group.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            List<TGroup> nameMatches = activeGroups
+                .Where(group => string.Equals(group.Name, name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (nameMatches.Count == 1)
+            {
+                yield return nameMatches[0];
+            }
+        }
     }
 
     private async Task<List<FlowNwGroup>> LoadFlowNwGroupsAsync(bool? visibleInRequest)
@@ -209,14 +431,14 @@ public sealed class FlowCatalogService
     }
 
     /// <summary>
-    /// Builds query variables for lookup requests with equality predicates.
+    /// Builds query variables for lookup requests with equality or null predicates.
     /// </summary>
-    private static Dictionary<string, object> BuildLookupQueryVariables(bool? visibleInRequest, params (string FieldName, object Value)[] conditions)
+    private static Dictionary<string, object> BuildLookupQueryVariables(bool? visibleInRequest, params (string FieldName, object? Value)[] conditions)
     {
         Dictionary<string, object> whereClause = BuildVisibleInRequestWhereClause(visibleInRequest);
-        foreach ((string fieldName, object value) in conditions)
+        foreach ((string fieldName, object? value) in conditions)
         {
-            whereClause[fieldName] = BuildEqualsExpression(value);
+            whereClause[fieldName] = BuildLookupExpression(value);
         }
 
         return new Dictionary<string, object> { ["where"] = whereClause };
@@ -230,18 +452,20 @@ public sealed class FlowCatalogService
         Dictionary<string, object> whereClause = [];
         if (visibleInRequest.HasValue)
         {
-            whereClause["show_in_request_module"] = BuildEqualsExpression(visibleInRequest.Value);
+            whereClause["show_in_request_module"] = BuildLookupExpression(visibleInRequest.Value);
         }
 
         return whereClause;
     }
 
     /// <summary>
-    /// Builds a Hasura _eq expression for the supplied value.
+    /// Builds a Hasura lookup expression for the supplied value.
     /// </summary>
-    private static Dictionary<string, object> BuildEqualsExpression(object value)
+    private static Dictionary<string, object> BuildLookupExpression(object? value)
     {
-        return new Dictionary<string, object> { ["_eq"] = value };
+        return value == null
+            ? new Dictionary<string, object> { ["_is_null"] = true }
+            : new Dictionary<string, object> { ["_eq"] = value };
     }
 
     private static AddressObjectResponse ToAddressObjectResponse(FlowNwObject flowObject)
@@ -250,11 +474,48 @@ public sealed class FlowCatalogService
         {
             Id = flowObject.Id,
             Name = flowObject.Name ?? string.Empty,
+            Type = ResolveAddressType(flowObject),
             IpStart = flowObject.IpStart ?? string.Empty,
             IpEnd = flowObject.IpEnd ?? string.Empty,
             State = flowObject.State,
             ShowInRequest = flowObject.ShowInRequestModule
         };
+    }
+
+    /// <summary>
+    /// Resolves the address object type from its IP range.
+    /// </summary>
+    private static string ResolveAddressType(FlowNwObject flowObject)
+    {
+        if (string.IsNullOrWhiteSpace(flowObject.IpStart) || string.IsNullOrWhiteSpace(flowObject.IpEnd))
+        {
+            return "fqdn";
+        }
+
+        string ipStartValue = flowObject.IpStart.Split('/', 2)[0];
+        string ipEndValue = flowObject.IpEnd.Split('/', 2)[0];
+        if (!IPAddress.TryParse(ipStartValue, out IPAddress? ipStart)
+            || !IPAddress.TryParse(ipEndValue, out IPAddress? ipEnd)
+            || ipStart.AddressFamily != ipEnd.AddressFamily)
+        {
+            Log.WriteWarning("FlowCatalogService", "ResolveAddressType - Invalid IP range: {flowObject.IpStart} - {flowObject.IpEnd}");
+            return "range";
+        }
+
+        if (ipStart.Equals(ipEnd))
+        {
+            return "host";
+        }
+
+        try
+        {
+            _ = new IPAddressRange(ipStart, ipEnd).GetPrefixLength();
+            return "network";
+        }
+        catch (FormatException)
+        {
+            return "range";
+        }
     }
 
     private static AddressGroupResponse ToAddressGroupResponse(FlowNwGroup flowGroup)
@@ -291,8 +552,8 @@ public sealed class FlowCatalogService
         {
             Id = flowObject.Id,
             Name = flowObject.Name,
-            PortStart = flowObject.PortStart ?? 0,
-            PortEnd = flowObject.PortEnd ?? 0,
+            PortStart = flowObject.PortStart,
+            PortEnd = flowObject.PortEnd,
             Protocol = protocol,
             State = flowObject.State,
             ShowInRequest = flowObject.ShowInRequestModule

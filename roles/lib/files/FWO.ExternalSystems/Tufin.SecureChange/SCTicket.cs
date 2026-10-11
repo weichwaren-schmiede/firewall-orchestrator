@@ -35,9 +35,6 @@ namespace FWO.ExternalSystems.Tufin.SecureChange
 
     public class SCTicket : ExternalTicket
     {
-        public string Subject { get; set; } = "";
-        public string Priority { get; set; } = SCTicketPriority.Normal.ToString();
-        public string Requester { get; set; } = "";
         readonly private string DefaultReason = "Kommunikationsprofil der Anwendung";
         readonly private string Content = "Content: ";
         private string actTicketTemplate;
@@ -91,7 +88,13 @@ namespace FWO.ExternalSystems.Tufin.SecureChange
         }
 
 
-        public SCTicket(ExternalTicketSystem tufinSystem, SCClient? sCClient = null)
+        /// <summary>
+        /// Creates a SecureChange ticket.
+        /// </summary>
+        /// <param name="tufinSystem">The SecureChange ticket system.</param>
+        /// <param name="certificateChecks">The certificate checking switches for the client created here.</param>
+        /// <param name="sCClient">An existing client, used instead of creating one.</param>
+        public SCTicket(ExternalTicketSystem tufinSystem, ExternalCertificateChecks certificateChecks, SCClient? sCClient = null)
         {
             if (sCClient != null)
             {
@@ -99,7 +102,7 @@ namespace FWO.ExternalSystems.Tufin.SecureChange
             }
             else
             {
-                SCClient = new(tufinSystem);
+                SCClient = new(tufinSystem, certificateChecks.TicketSystems);
             }
             TicketSystem = tufinSystem;
             actTicketTemplate = TicketSystem.Templates.FirstOrDefault()?.TicketTemplate ?? "";
