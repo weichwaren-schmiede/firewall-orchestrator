@@ -282,7 +282,7 @@ class TestAttemptConnection:
     def test_success_returns_config(self, _mock_close: MagicMock, _mock_retrieve: MagicMock, mock_connect: MagicMock):  # noqa: PT019
         mock_connect.return_value = MagicMock()
         mgm = MagicMock()
-        result = _attempt_connection(mgm, False, 0, 3)  # noqa: FBT003
+        result = _attempt_connection(mgm, False, 0, 3)
         assert result == "hostname asa"
 
     @patch("fw_modules.ciscoasa9.fwcommon._connect_to_device")
@@ -296,7 +296,7 @@ class TestAttemptConnection:
         mgm = MagicMock()
         mgm.hostname = "10.0.0.1"
         with pytest.raises(FwoImporterError):
-            _attempt_connection(mgm, False, 2, 3)  # noqa: FBT003
+            _attempt_connection(mgm, False, 2, 3)
         mock_close.assert_called()
 
     @patch("fw_modules.ciscoasa9.fwcommon._connect_to_device")
@@ -308,7 +308,7 @@ class TestAttemptConnection:
         mgm = MagicMock()
         mgm.hostname = "10.0.0.1"
         with pytest.raises(FwoImporterError):
-            _attempt_connection(mgm, False, 0, 3)  # noqa: FBT003
+            _attempt_connection(mgm, False, 0, 3)
 
 
 class TestLoadConfigFromManagement:
@@ -316,7 +316,7 @@ class TestLoadConfigFromManagement:
     @patch("fw_modules.ciscoasa9.fwcommon._attempt_connection", return_value="hostname asa")
     def test_first_attempt_success(self, mock_attempt: MagicMock, _mock_log: MagicMock):  # noqa: PT019
         mgm = MagicMock()
-        result = load_config_from_management(mgm, False, max_retries=3)  # noqa: FBT003
+        result = load_config_from_management(mgm, False, max_retries=3)
         assert result == "hostname asa"
         mock_attempt.assert_called_once()
 
@@ -325,7 +325,7 @@ class TestLoadConfigFromManagement:
     def test_success_on_second_attempt(self, mock_attempt: MagicMock, _mock_log: MagicMock):  # noqa: PT019
         mock_attempt.side_effect = [FwoImporterError("fail"), "hostname asa"]
         mgm = MagicMock()
-        result = load_config_from_management(mgm, False, max_retries=3)  # noqa: FBT003
+        result = load_config_from_management(mgm, False, max_retries=3)
         assert result == "hostname asa"
 
     @patch("fw_modules.ciscoasa9.fwcommon._log_retry_attempt")
@@ -335,13 +335,13 @@ class TestLoadConfigFromManagement:
         mgm = MagicMock()
         mgm.hostname = "10.0.0.1"
         with pytest.raises(FwoImporterError):
-            load_config_from_management(mgm, False, max_retries=2)  # noqa: FBT003
+            load_config_from_management(mgm, False, max_retries=2)
 
     def test_zero_max_retries_raises_immediately(self):
         mgm = MagicMock()
         mgm.hostname = "10.0.0.1"
         with pytest.raises(FwoImporterError, match="after 0 attempts"):
-            load_config_from_management(mgm, False, max_retries=0)  # noqa: FBT003
+            load_config_from_management(mgm, False, max_retries=0)
 
 
 class TestGetConfig:
