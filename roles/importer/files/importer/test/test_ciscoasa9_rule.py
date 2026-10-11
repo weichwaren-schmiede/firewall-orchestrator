@@ -29,23 +29,25 @@ def _permit_entry() -> AccessListEntry:
     )
 
 
+def _protocol_group_entry(group_name: str) -> AccessListEntry:
+    return _permit_entry().model_copy(update={"protocol": EndpointKind(kind="protocol-group", value=group_name)})
+
+
 class TestCreateServiceForProtocolGroupEntry:
     def test_found_group_creates_any_services(self):
         pg = AsaProtocolGroup(name="pg1", protocols=["tcp", "udp"], description=None)
-        ref = create_service_for_protocol_group_entry("pg1", [pg], {})
+        ref = create_service_for_protocol_group_entry(_protocol_group_entry("pg1"), [pg], {})
         assert "any-tcp" in ref
         assert "any-udp" in ref
 
-    def test_missing_group_falls_back_to_tcp_udp_icmp(self):
-        ref = create_service_for_protocol_group_entry("missing-pg", [], {})
-        assert "any-tcp" in ref
-        assert "any-udp" in ref
-        assert "any-icmp" in ref
+    def test_missing_group_raises(self):
+        with pytest.raises(ValueError, match="unknown or empty"):
+            create_service_for_protocol_group_entry(_protocol_group_entry("missing-pg"), [], {})
 
-    def test_empty_protocol_list_falls_back(self):
+    def test_empty_protocol_list_raises(self):
         pg = AsaProtocolGroup(name="empty-pg", protocols=[], description=None)
-        ref = create_service_for_protocol_group_entry("empty-pg", [pg], {})
-        assert "any-tcp" in ref
+        with pytest.raises(ValueError, match="unknown or empty"):
+            create_service_for_protocol_group_entry(_protocol_group_entry("empty-pg"), [pg], {})
 
 
 class TestResolveNetworkReferenceForRule:

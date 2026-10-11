@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import pytest
+from fw_modules.ciscoasa9.asa_acl_parser import AsaConfigParseError
 from fw_modules.ciscoasa9.asa_parser import (
     Config,
     _handle_access_group,  # pyright: ignore[reportPrivateUsage]
@@ -380,10 +381,10 @@ class TestAccessListEntryParsing:
         assert "acl1" in acl_names
         assert "acl2" in acl_names
 
-    def test_malformed_entry_skipped_gracefully(self):
+    def test_malformed_entry_stops_the_parse(self):
         raw = _HEADER + "access-list acl1 extended permit\n"
-        cfg = parse_asa_config(raw)
-        assert len(cfg.access_lists) == 0
+        with pytest.raises(AsaConfigParseError, match="protocol is expected"):
+            parse_asa_config(raw)
 
     def test_any4_treated_as_any(self):
         cfg = _parse(
@@ -584,8 +585,8 @@ class TestInternalHandlerBranches:
         line = "access-list acl1 extended permit object-group no-such-group any any"
         match = re.match(r"^access-list\s+\S+\s+extended\s+(permit|deny)\s+", line, re.IGNORECASE)
         assert match is not None
-        result_i = _handle_access_list_entry(match, line, [line], 0, state)
-        assert result_i == 1
+        with pytest.raises(AsaConfigParseError, match="no-such-group"):
+            _handle_access_list_entry(match, line, [line], 0, state)
         assert state.access_lists_map == {}
 
     def test_handle_access_group_invalid_direction_raises(self):

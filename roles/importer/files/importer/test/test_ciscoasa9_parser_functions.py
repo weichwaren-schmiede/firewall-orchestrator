@@ -1,8 +1,15 @@
-"""Tests for fw_modules/ciscoasa9/asa_parser_functions.py"""
+"""Tests for fw_modules/ciscoasa9/asa_parser_functions.py and asa_acl_parser.py"""
 
 from typing import Literal
 
 import pytest
+from fw_modules.ciscoasa9.asa_acl_parser import (
+    AsaConfigParseError,
+    _parse_destination_service,  # pyright: ignore[reportPrivateUsage]
+    _parse_protocol,  # pyright: ignore[reportPrivateUsage]
+    parse_access_list_entry,
+    parse_endpoint,
+)
 from fw_modules.ciscoasa9.asa_models import (
     AsaProtocolGroup,
     AsaServiceObject,
@@ -14,15 +21,11 @@ from fw_modules.ciscoasa9.asa_parser_functions import (
     _consume_service_definitions,  # pyright: ignore[reportPrivateUsage]
     _consume_service_references,  # pyright: ignore[reportPrivateUsage]
     _create_network_object_from_parts,  # pyright: ignore[reportPrivateUsage]
-    _parse_access_list_entry_dest_port,  # pyright: ignore[reportPrivateUsage]
-    _parse_access_list_entry_protocol,  # pyright: ignore[reportPrivateUsage]
     _parse_policy_class_block,  # pyright: ignore[reportPrivateUsage]
-    clean_lines,
+    clean_numbered_lines,
     consume_block,
-    parse_access_list_entry,
     parse_class_map_block,
     parse_dns_inspect_policy_map_block,
-    parse_endpoint,
     parse_icmp_object_group_block,
     parse_interface_block,
     parse_network_object_block,
@@ -35,55 +38,51 @@ from fw_modules.ciscoasa9.asa_parser_functions import (
 
 
 class TestParseEndpoint:
-    def test_empty_tokens_returns_any(self):
-        ep, consumed = parse_endpoint([])
-        assert ep.kind == "any"
-        assert consumed == 0
+    def test_empty_tokens_raises(self):
+        with pytest.raises(AsaConfigParseError):
+            parse_endpoint([], 0)
 
     def test_any_token(self):
-        ep, consumed = parse_endpoint(["any"])
+        ep, next_pos = parse_endpoint(["any"], 0)
         assert ep.kind == "any"
-        assert consumed == 1
+        assert next_pos == 1
 
     def test_host_with_ip(self):
-        ep, consumed = parse_endpoint(["host", "10.0.0.1"])
+        ep, next_pos = parse_endpoint(["host", "10.0.0.1"], 0)
         assert ep.kind == "host"
         assert ep.value == "10.0.0.1"
-        assert consumed == 2
+        assert next_pos == 2
 
-    def test_host_without_ip_falls_back_to_any(self):
-        ep, consumed = parse_endpoint(["host"])
-        assert ep.kind == "any"
-        assert consumed == 1
+    def test_host_without_ip_raises(self):
+        with pytest.raises(AsaConfigParseError):
+            parse_endpoint(["host"], 0)
 
     def test_object_keyword(self):
-        ep, consumed = parse_endpoint(["object", "my-obj"])
+        ep, next_pos = parse_endpoint(["object", "my-obj"], 0)
         assert ep.kind == "object"
         assert ep.value == "my-obj"
-        assert consumed == 2
+        assert next_pos == 2
 
     def test_object_group_keyword(self):
-        ep, consumed = parse_endpoint(["object-group", "my-grp"])
+        ep, next_pos = parse_endpoint(["object-group", "my-grp"], 0)
         assert ep.kind == "object-group"
         assert ep.value == "my-grp"
-        assert consumed == 2
+        assert next_pos == 2
 
     def test_subnet_notation(self):
-        ep, consumed = parse_endpoint(["10.0.0.0", "255.255.255.0"])
+        ep, next_pos = parse_endpoint(["10.0.0.0", "255.255.255.0"], 0)
         assert ep.kind == "subnet"
         assert ep.value == "10.0.0.0"
         assert ep.mask == "255.255.255.0"
-        assert consumed == 2
+        assert next_pos == 2
 
-    def test_single_ip_without_mask_falls_back_to_any(self):
-        ep, consumed = parse_endpoint(["10.0.0.1"])
-        assert ep.kind == "any"
-        assert consumed == 1
+    def test_single_ip_without_mask_raises(self):
+        with pytest.raises(AsaConfigParseError):
+            parse_endpoint(["10.0.0.1"], 0)
 
-    def test_garbage_token_falls_back_to_any(self):
-        ep, consumed = parse_endpoint(["garbage"])
-        assert ep.kind == "any"
-        assert consumed == 1
+    def test_garbage_token_raises(self):
+        with pytest.raises(AsaConfigParseError):
+            parse_endpoint(["garbage"], 0)
 
 
 class TestConsumeBlock:
@@ -182,13 +181,13 @@ class TestParseServiceObjectGroupBlock:
 class TestParseAccessListEntryProtocol:
     def test_unknown_object_group_raises(self):
         parts = ["access-list", "acl", "extended", "permit", "object-group", "missing-grp"]
-        with pytest.raises(ValueError, match="Unknown object-group"):
-            _parse_access_list_entry_protocol(parts, [], [], [])
+        with pytest.raises(AsaConfigParseError, match="unknown protocol or service object-group"):
+            _parse_protocol(parts, 4, [], [], [])
 
     def test_known_protocol_group_recognized(self):
         pg = AsaProtocolGroup(name="pg1", protocols=["tcp"], description=None)
         parts = ["access-list", "acl", "extended", "permit", "object-group", "pg1", "any", "any"]
-        proto, _ = _parse_access_list_entry_protocol(parts, [pg], [], [])
+        proto, _ = _parse_protocol(parts, 4, [pg], [], [])
         assert proto.kind == "protocol-group"
         assert proto.value == "pg1"
 
@@ -197,24 +196,24 @@ class TestParseAccessListEntryProtocol:
             name="sg1", proto_mode="tcp", ports_eq={}, ports_range={}, nested_refs=[], protocols=[], description=None
         )
         parts = ["access-list", "acl", "extended", "permit", "object-group", "sg1", "any", "any"]
-        proto, _ = _parse_access_list_entry_protocol(parts, [], [], [svc_grp])
+        proto, _ = _parse_protocol(parts, 4, [], [], [svc_grp])
         assert proto.kind == "service-group"
 
     def test_unknown_service_object_raises(self):
         parts = ["access-list", "acl", "extended", "permit", "object", "missing-svc"]
-        with pytest.raises(ValueError, match="Unknown service object"):
-            _parse_access_list_entry_protocol(parts, [], [], [])
+        with pytest.raises(AsaConfigParseError, match="unknown service object"):
+            _parse_protocol(parts, 4, [], [], [])
 
     def test_known_service_object_recognized(self):
         svc = AsaServiceObject(name="my-svc", protocol="tcp", dst_port_eq="443")
         parts = ["access-list", "acl", "extended", "permit", "object", "my-svc", "any", "any"]
-        proto, _ = _parse_access_list_entry_protocol(parts, [], [svc], [])
+        proto, _ = _parse_protocol(parts, 4, [], [svc], [])
         assert proto.kind == "service"
         assert proto.value == "my-svc"
 
     def test_plain_protocol_token(self):
         parts = ["access-list", "acl", "extended", "permit", "tcp", "any", "any"]
-        proto, _ = _parse_access_list_entry_protocol(parts, [], [], [])
+        proto, _ = _parse_protocol(parts, 4, [], [], [])
         assert proto.kind == "protocol"
         assert proto.value == "tcp"
 
@@ -240,34 +239,33 @@ class TestParseAccessListEntryDestPort:
         return EndpointKind(kind=kind, value=value)
 
     def test_eq_port(self):
-        dst_port, _ = _parse_access_list_entry_dest_port(["eq", "443", "inactive"], self._proto())
+        dst_port, _ = _parse_destination_service(["eq", "443", "inactive"], 0, self._proto())
         assert dst_port.kind == "eq"
         assert dst_port.value == "443"
 
     def test_range_port(self):
-        dst_port, _ = _parse_access_list_entry_dest_port(["range", "1024", "65535"], self._proto())
+        dst_port, _ = _parse_destination_service(["range", "1024", "65535"], 0, self._proto())
         assert dst_port.kind == "range"
-        assert "1024" in dst_port.value
-        assert "65535" in dst_port.value
+        assert dst_port.value == "1024 65535"
 
     def test_object_group_port(self):
-        dst_port, _ = _parse_access_list_entry_dest_port(["object-group", "svc-grp"], self._proto())
+        dst_port, _ = _parse_destination_service(["object-group", "svc-grp"], 0, self._proto())
         assert dst_port.kind == "service-group"
         assert dst_port.value == "svc-grp"
 
     def test_no_port_defaults_to_any(self):
-        dst_port, _ = _parse_access_list_entry_dest_port([], self._proto())
+        dst_port, _ = _parse_destination_service([], 0, self._proto())
         assert dst_port.kind == "any"
 
     def test_service_group_protocol_propagates_to_dst_port(self):
         proto = self._proto(kind="service-group", value="my-sg")
-        dst_port, _ = _parse_access_list_entry_dest_port([], proto)
+        dst_port, _ = _parse_destination_service([], 0, proto)
         assert dst_port.kind == "service-group"
         assert dst_port.value == "my-sg"
 
     def test_service_protocol_propagates_to_dst_port(self):
         proto = self._proto(kind="service", value="my-svc")
-        dst_port, _ = _parse_access_list_entry_dest_port([], proto)
+        dst_port, _ = _parse_destination_service([], 0, proto)
         assert dst_port.kind == "service"
         assert dst_port.value == "my-svc"
 
@@ -305,29 +303,23 @@ class TestCreateNetworkObjectFromParts:
         assert result.subnet_mask == "255.255.255.0"
 
 
-class TestCleanLines:
-    def test_colon_lines_removed(self):
+class TestCleanNumberedLines:
+    def test_colon_lines_removed_and_line_numbers_kept(self):
         text = ": Saved\n: end\nhostname fw\n"
-        lines = clean_lines(text)
-        assert "hostname fw" in lines
-        assert not any(line.startswith(":") for line in lines)
+        assert clean_numbered_lines(text) == [(3, "hostname fw")]
 
     def test_regular_lines_preserved(self):
         text = "ASA Version 9.1\nhostname asa\n"
-        lines = clean_lines(text)
-        assert "ASA Version 9.1" in lines
-        assert "hostname asa" in lines
+        assert clean_numbered_lines(text) == [(1, "ASA Version 9.1"), (2, "hostname asa")]
 
     def test_trailing_whitespace_stripped(self):
-        text = "hostname asa   \n"
-        lines = clean_lines(text)
-        assert lines[0] == "hostname asa"
+        assert clean_numbered_lines("hostname asa   \n") == [(1, "hostname asa")]
 
     def test_empty_string_returns_empty_list(self):
-        assert clean_lines("") == []
+        assert clean_numbered_lines("") == []
 
     def test_only_colon_lines_returns_empty(self):
-        assert clean_lines(": a\n: b\n") == []
+        assert clean_numbered_lines(": a\n: b\n") == []
 
 
 class TestParseInterfaceBlock:
@@ -626,7 +618,7 @@ class TestParseAccessListEntryDestPortObject:
         return EndpointKind(kind=kind, value=value)
 
     def test_object_dst_port(self):
-        dst_port, _ = _parse_access_list_entry_dest_port(["object", "my-svc", "inactive"], self._proto())
+        dst_port, _ = _parse_destination_service(["object", "my-svc", "inactive"], 0, self._proto())
         assert dst_port.kind == "service"
         assert dst_port.value == "my-svc"
 

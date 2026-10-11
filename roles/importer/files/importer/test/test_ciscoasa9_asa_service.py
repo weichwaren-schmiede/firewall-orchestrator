@@ -200,16 +200,16 @@ class TestNormalizeServiceObjects:
 
 class TestCreateProtocolAnyServiceObjects:
     def test_creates_four_protocols(self):
-        result = create_protocol_any_service_objects()
-        assert set(result.keys()) == {"any-tcp", "any-udp", "any-icmp", "any-ip"}
+        result = create_protocol_any_service_objects({})
+        assert set(result.keys()) == {"any-tcp", "any-udp", "any-icmp", "ANY"}
 
     def test_tcp_covers_full_port_range(self):
-        result = create_protocol_any_service_objects()
+        result = create_protocol_any_service_objects({})
         assert result["any-tcp"].svc_port == 0
         assert result["any-tcp"].svc_port_end == 65535
 
     def test_each_has_correct_ip_proto(self):
-        result = create_protocol_any_service_objects()
+        result = create_protocol_any_service_objects({})
         assert result["any-tcp"].ip_proto == 6
         assert result["any-udp"].ip_proto == 17
         assert result["any-icmp"].ip_proto == 1
@@ -331,11 +331,11 @@ class TestCreateServiceForProtocolEntryWithSingleProtocol:
         name = create_service_for_protocol_entry_with_single_protocol(entry, svcs)
         assert name == "my-grp"
 
-    def test_unknown_dst_kind_falls_back_to_any_protocol(self):
+    def test_unknown_dst_kind_raises(self):
         svcs: dict[str, ServiceObject] = {}
         entry = _acl_entry(dst_kind="host", dst_value="irrelevant")
-        name = create_service_for_protocol_entry_with_single_protocol(entry, svcs)
-        assert name == "any-tcp"
+        with pytest.raises(ValueError, match="Unsupported destination"):
+            create_service_for_protocol_entry_with_single_protocol(entry, svcs)
 
 
 class TestCreateServiceForProtocolEntry:
@@ -357,12 +357,13 @@ class TestCreateServiceForProtocolEntry:
         name = create_service_for_protocol_entry(entry, svcs)
         assert name == "any-icmp"
 
-    def test_ip_creates_any_group_for_all_protocols(self):
+    def test_ip_creates_any_ip_service(self):
         svcs: dict[str, ServiceObject] = {}
         entry = _acl_entry(proto_kind="protocol", proto_value="ip", dst_kind="any", dst_value="any")
         name = create_service_for_protocol_entry(entry, svcs)
         assert name == "ANY"
-        assert svcs["ANY"].svc_typ == "group"
+        assert svcs["ANY"].svc_typ == "simple"
+        assert svcs["ANY"].svc_name == "any-ip"
 
     def test_unknown_protocol_falls_back_to_any(self):
         svcs: dict[str, ServiceObject] = {}
@@ -396,13 +397,11 @@ class TestCreateServiceForAclEntry:
         name = create_service_for_acl_entry(entry, svcs)
         assert name == "proto-grp"
 
-    def test_unknown_kind_creates_tcp_udp_icmp_any(self):
+    def test_unknown_kind_raises(self):
         svcs: dict[str, ServiceObject] = {}
         entry = _acl_entry(proto_kind="any", proto_value="any")
-        name = create_service_for_acl_entry(entry, svcs)
-        assert "any-tcp" in name
-        assert "any-udp" in name
-        assert "any-icmp" in name
+        with pytest.raises(ValueError, match="Unsupported protocol"):
+            create_service_for_acl_entry(entry, svcs)
 
 
 class TestProcessMixedProtocolEqPorts:
